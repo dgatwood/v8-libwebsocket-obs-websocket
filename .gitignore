@@ -1,0 +1,5 @@
+bin
+deps/libwebsockets
+deps/build
+.DS_Store
+*.swp
