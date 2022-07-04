@@ -1,6 +1,4 @@
 
-OPENSSL_ROOT_DIR=/usr/local/opt/openssl
-
 all: libwebsockets build build/lib/libwebsockets.dylib
 
 clean:
@@ -15,5 +13,5 @@ build:
 build/lib/libwebsockets.dylib:
 	make build;
 	make libwebsockets;
-	cd build && cmake ../libwebsockets -DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR} && make && sudo make install
+	cd build && cmake ../libwebsockets -DOPENSSL_ROOT_DIR=$(shell ./get_ssl_dir.sh) && make && sudo make install
 
