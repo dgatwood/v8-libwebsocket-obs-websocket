@@ -1,5 +1,8 @@
+#include "bin/obs-websocket.h"
+#include "bin/gettally.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <uuid/uuid.h>
 
@@ -17,7 +20,14 @@ void subscribeToStateUpdates(void);
 char *generate_uuid_string(void);
 
 int main(int argc, char *argv[]) {
-  getInitialScenes();
+
+  // printf("%s", gettally_js);
+  // printf("%s", obs_websocket_js);
+
+  // Load the "obs_websocket_js" script.
+
+  // Load the "gettally.js" script.
+  // getInitialScenes();
 
   return 0;
 }

@@ -16,7 +16,7 @@ void runScript(char *script) {
   v8::Isolate::CreateParams create_params;
   create_params.array_buffer_allocator =
       v8::ArrayBuffer::Allocator::NewDefaultAllocator();
-  v8::Isolate* isolate = v8::Isolate::New(create_params);
+  thread_local v8::Isolate* isolate = v8::Isolate::New(create_params);
   {
     v8::Isolate::Scope isolate_scope(isolate);
     // Create a stack-allocated handle scope.
@@ -27,7 +27,7 @@ void runScript(char *script) {
     v8::Context::Scope context_scope(context);
     // Create a string containing the JavaScript source code.
     v8::Local<v8::String> source =
-        v8::String::NewFromUtf8(isolate, "'Hello' + ', World!'",
+        v8::String::NewFromUtf8(isolate, script,
                                 v8::NewStringType::kNormal)
             .ToLocalChecked();
     // Compile the source code.

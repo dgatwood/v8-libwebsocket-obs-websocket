@@ -6,7 +6,7 @@ LDFLAGS=-lv8 -lv8_libplatform -lv8_libbase -lc++
 # even on arm, so force our binaries to also use that architecture.  Ugh.
 UNAME := $(shell uname)
 ifeq ($(UNAME), Darwin)
-    CFLAGS+=-arch x86_64
+    CFLAGS+=-arch x86_64 -O0 -g
     CXXFLAGS+=-arch x86_64
     LDFLAGS+=-arch x86_64
 endif
@@ -19,7 +19,19 @@ clean:
 makebin:
 	mkdir -p bin
 
-bin/gettally.o: gettally.c
+bin/translatejstocstring: translatejstocstring.c
+	make makebin;
+	cc translatejstocstring.c -o bin/translatejstocstring
+
+bin/obs-websocket.h: obs-websocket.js bin/translatejstocstring
+	make makebin;
+	cat obs-websocket.js | bin/translatejstocstring obs_websocket_js > bin/obs-websocket.h
+
+bin/gettally.h: gettally.js bin/translatejstocstring
+	make makebin;
+	cat gettally.js | bin/translatejstocstring gettally_js > bin/gettally.h
+
+bin/gettally.o: gettally.c bin/obs-websocket.h bin/gettally.h
 	make makebin;
 	cc -c ${CFLAGS} gettally.c -o bin/gettally.o
 
