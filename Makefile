@@ -1,5 +1,6 @@
 
 CFLAGS=-I$(shell ./find_ssl_include_dir.sh)
+CXXFLAGS=-std=c++14
 
 # On Mac, at least with Homebrew, the cmake command builds x86_64 binaries
 # even on arm, so force our binaries to also use that architecture.  Ugh.
@@ -22,6 +23,12 @@ clean:
 makebin:
 	mkdir -p bin
 
-bin/gettally: gettally.c
+bin/gettally.o: gettally.c
+	cc ${CFLAGS} gettally.c -o bin/gettally.o
+
+bin/v8_setup.o: v8_setup.cpp
+	c++ ${CXXFLAGS} ${CFLAGS} v8_setup.cpp -o bin/v8_setup.o
+
+bin/gettally: bin/gettally.o bin/v8_setup.o
 	make makebin;
-	cc ${CFLAGS} ${LDFLAGS} gettally.c -o bin/gettally -lwebsockets
+	cc ${LDFLAGS} bin/*.o -o bin/gettally -lwebsockets

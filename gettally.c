@@ -1,6 +1,6 @@
-#include <libwebsockets.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <uuid/uuid.h>
 
 // This supports ONLY the new 5.0 protocol.
@@ -11,30 +11,6 @@ bool onProgram = false;
 void getInitialScenes(void);
 void subscribeToStateUpdates(void);
 
-typedef struct simpleCommandPayload {
-  const char      *requestType;
-  const char      *requestID;
-} simpleCommandPayload_t;
-
-typedef struct simpleCommand {
-  int op;
-  simpleCommandPayload_t payload;
-} simpleCommand_t;
-
-const lws_struct_map_t simpleCommandPayload_map[] = {
-    LSM_STRING_PTR  (simpleCommandPayload_t, requestType, "requestType"),
-    LSM_STRING_PTR  (simpleCommandPayload_t, requestID, "requestId"),
-};
-
-const lws_struct_map_t simpleCommand[] = {
-    LSM_UNSIGNED    (simpleCommand_t, op,     "op"),
-    LSM_CHILD_PTR   (simpleCommand_t, payload, simpleCommandPayload_t,
-                     NULL, simpleCommandPayload_map, "d"),
-};
-
-const lws_struct_map_t simpleCommandSchemaMap[] = {
-    LSM_SCHEMA      (simpleCommand_t, NULL, simpleCommand, "simpleCommand"),
-};
 
 // Returns a UUID string.  The caller is responsible for freeing
 // the returned pointer.
@@ -52,25 +28,6 @@ void getInitialScenes(void) {
   //     GetCurrentProgramScene
   //     GetCurrentPreviewScene
 
-  simpleCommand_t command;
-  command.op = 6;
-  command.payload.requestType = "GetCurrentProgramScene";
-
-  char *tempUUID = generate_uuid_string();
-  command.payload.requestID = tempUUID;
-
-  // Generate and send JSON blob here. @@@
-  // Read reply here and check UUID.
-
-  free(tempUUID);
-
-  tempUUID = generate_uuid_string();
-  command.payload.requestID = tempUUID;
-
-  // Generate and send JSON blob here. @@@
-  // Read reply here and check UUID.
-
-  free(tempUUID);
 }
 
 void subscribeToStateUpdates(void) {
@@ -110,7 +67,7 @@ void subscribeToStateUpdates(void) {
 char *generate_uuid_string(void) {
   uuid_t rawUUID;
   uuid_generate(rawUUID);
-  char *buf = malloc(37);
+  char *buf = (char *)malloc(37);
   uuid_unparse(rawUUID, buf);
   return buf;
 }
