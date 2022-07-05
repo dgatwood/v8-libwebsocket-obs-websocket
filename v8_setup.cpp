@@ -4,8 +4,8 @@
 static v8::Isolate::CreateParams create_params;
 
 void v8_setup(void) {
-  v8::V8::InitializeICUDefaultLocation(argv[0]);
-  v8::V8::InitializeExternalStartupData(argv[0]);
+  v8::V8::InitializeICUDefaultLocation("viscaptz");
+  v8::V8::InitializeExternalStartupData("viscaptz");
   std::unique_ptr<v8::Platform> platform = v8::platform::NewDefaultPlatform();
   v8::V8::InitializePlatform(platform.get());
   v8::V8::Initialize();
@@ -45,7 +45,7 @@ void runScript(char *script) {
 
 void v8_teardown(void) {
 
-  V8::Dispose();
-  V8::DisposePlatform();
+  v8::V8::Dispose();
+  v8::V8::DisposePlatform();
   delete create_params.array_buffer_allocator;
 }
