@@ -98,14 +98,14 @@ char *generate_uuid_string(void) {
 
 #pragma mark - V8 callbacks
 
-void setSceneIsProgram(char *sceneName) {
+void setSceneIsProgram(const char *sceneName) {
   fprintf(stderr, "Scene %s is on program.\n", sceneName);
 }
 
-void setSceneIsPreview(char *sceneName) {
+void setSceneIsPreview(const char *sceneName) {
   fprintf(stderr, "Scene %s is on preview.\n", sceneName);
 }
 
-void setSceneIsInactive(char *sceneName) {
+void setSceneIsInactive(const char *sceneName) {
   fprintf(stderr, "Scene %s is inactive.\n", sceneName);
 }
