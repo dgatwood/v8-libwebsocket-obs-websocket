@@ -1,4 +1,5 @@
 
+CFLAGS=-DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH
 CXXFLAGS=-std=c++14
 LDFLAGS=-lv8 -lv8_libplatform -lv8_libbase -lc++
 

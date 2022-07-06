@@ -4,7 +4,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <uuid/uuid.h>
+
+
+#include "v8_setup.h"
 
 // This supports ONLY the new 5.0 protocol.
 
@@ -28,6 +32,16 @@ int main(int argc, char *argv[]) {
 
   // Load the "gettally.js" script.
   // getInitialScenes();
+
+#if 1
+  v8_setup();
+  runScript(obs_websocket_js);
+  runScript(gettally_js);
+
+  while (true) {
+    usleep(100000);
+  }
+#endif
 
   return 0;
 }
