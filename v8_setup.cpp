@@ -18,21 +18,44 @@ void setSceneIsPreview(const char *sceneName);
 void setSceneIsInactive(const char *sceneName);
 };
 
-void ProgramSceneGetter(v8::Local<v8::String> property,
-              const v8::PropertyCallbackInfo<v8::Value>& info);
-void ProgramSceneSetter(v8::Local<v8::String> property, v8::Local<v8::Value> value,
-             const v8::PropertyCallbackInfo<void>& info);
-void PreviewSceneGetter(v8::Local<v8::String> property,
-              const v8::PropertyCallbackInfo<v8::Value>& info);
-void PreviewSceneSetter(v8::Local<v8::String> property, v8::Local<v8::Value> value,
-             const v8::PropertyCallbackInfo<void>& info);
-
-void testFunction(const v8::FunctionCallbackInfo<v8::Value>& args)
+void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
 {
   v8::Isolate* isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
 
-  fprintf(stderr, "Test function called.\n");
+  fprintf(stderr, "setProgramAndPreviewScenes called.\n");
+
+  if(args.Length() != 2 || !args[0]->IsArray() || !args[1]->IsArray()) {
+    isolate->ThrowException(v8::Exception::TypeError(
+        v8::String::NewFromUtf8(isolate, "Error: Two arrays expected").ToLocalChecked()));
+    return;
+  }
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  v8::Handle<v8::Array> previewSceneArray = v8::Handle<v8::Array>::Cast(args[0]);
+
+  std::vector<std::string> newProgramScenes;
+
+  for (int i = 0; i < previewSceneArray->Length(); i++) {
+    v8::Local<v8::Value> element = previewSceneArray->Get(context, i).ToLocalChecked();
+    v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), element);
+    std::string programSceneCPPString(*programSceneUTF8);
+    newProgramScenes.push_back(programSceneCPPString);
+  }
+
+  v8::Handle<v8::Array> programSceneArray = v8::Handle<v8::Array>::Cast(args[1]);
+
+  std::vector<std::string> newPreviewScenes;
+
+  for (int i = 0; i < programSceneArray->Length(); i++) {
+    v8::Local<v8::Value> element = programSceneArray->Get(context, i).ToLocalChecked();
+    v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), element);
+    std::string previewSceneCPPString(*previewSceneUTF8);
+    newPreviewScenes.push_back(previewSceneCPPString);
+  }
+
+  updateScenes(newPreviewScenes, newProgramScenes);
 }
 
 void v8_setup(void) {
@@ -55,13 +78,9 @@ void v8_setup(void) {
   v8::HandleScope handle_scope(gIsolate);
 
   globals = v8::ObjectTemplate::New(gIsolate);
-  globals->SetAccessor(v8::String::NewFromUtf8(gIsolate, "ProgramScene", v8::NewStringType::kNormal).ToLocalChecked(),
-                       ProgramSceneGetter, ProgramSceneSetter);
-  globals->SetAccessor(v8::String::NewFromUtf8(gIsolate, "PreviewScene", v8::NewStringType::kNormal).ToLocalChecked(),
-                       PreviewSceneGetter, PreviewSceneSetter);
 
-  globals->Set(v8::String::NewFromUtf8(gIsolate, "testFunction").ToLocalChecked(),
-               v8::FunctionTemplate::New(gIsolate, testFunction));
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "setProgramAndPreviewScenes").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, setProgramAndPreviewScenes));
 
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
@@ -108,99 +127,9 @@ void v8_teardown(void) {
 
 #pragma mark - Synthesized getters and setters
 
-void ProgramSceneGetter(v8::Local<v8::String> property,
-              const v8::PropertyCallbackInfo<v8::Value>& info) {
-  fprintf(stderr, "ProgramSceneGetter called.\n");
 
-  // Create a stack-allocated handle scope.
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
 
-  v8::Local<v8::Array> programScenesV8 = v8::Array::New(v8::Isolate::GetCurrent(), programScenes.size());
 
-  v8::Local<v8::Context> context = v8::Isolate::GetCurrent()->GetCurrentContext();
-  for (int i = 0; i < programScenes.size(); i++) {
-    v8::Local<v8::String> programSceneV8String =
-        v8::String::NewFromUtf8(v8::Isolate::GetCurrent(), programScenes[i].c_str()).ToLocalChecked();
-    programScenesV8->Set(context, i, programSceneV8String);
-  }
-  info.GetReturnValue().Set(programScenesV8);
-}
-
-void ProgramSceneSetter(v8::Local<v8::String> property, v8::Local<v8::Value> value,
-             const v8::PropertyCallbackInfo<void>& info) {
-  fprintf(stderr, "ProgramSceneSetter called.\n");
-
-  // Create a stack-allocated handle scope.
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
-
-  if(!value->IsArray()) {
-    fprintf(stderr, "ProgramSceneSetter called with non-array.\n");
-    return;
-  }
-
-  v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(value);
-  int length = array->Length();
-
-  std::vector<std::string> newProgramScenes;
-  v8::Local<v8::Context> context = v8::Isolate::GetCurrent()->GetCurrentContext();
-
-  for (int i = 0; i < length; i++) {
-    v8::Local<v8::Value> element = array->Get(context, i).ToLocalChecked();
-
-    v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), value);
-    std::string programSceneCPPString(*programSceneUTF8);
-    newProgramScenes[i] = programSceneCPPString;
-  }
-
-  updateScenes(previewScenes, newProgramScenes);
-}
-
-void PreviewSceneGetter(v8::Local<v8::String> property,
-              const v8::PropertyCallbackInfo<v8::Value>& info) {
-  fprintf(stderr, "PreviewSceneGetter called.\n");
-
-  // Create a stack-allocated handle scope.
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
-
-  v8::Local<v8::Array> previewScenesV8 = v8::Array::New(v8::Isolate::GetCurrent(), previewScenes.size());
-
-  v8::Local<v8::Context> context = v8::Isolate::GetCurrent()->GetCurrentContext();
-  for (int i = 0; i < previewScenes.size(); i++) {
-    v8::Local<v8::String> previewSceneV8String =
-        v8::String::NewFromUtf8(v8::Isolate::GetCurrent(), previewScenes[i].c_str()).ToLocalChecked();
-    previewScenesV8->Set(context, i, previewSceneV8String);
-  }
-  info.GetReturnValue().Set(previewScenesV8);
-}
-
-void PreviewSceneSetter(v8::Local<v8::String> property, v8::Local<v8::Value> value,
-             const v8::PropertyCallbackInfo<void>& info) {
-  fprintf(stderr, "ProgramSceneSetter called.\n");
-
-  // Create a stack-allocated handle scope.
-  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
-
-  if(!value->IsArray()) {
-    fprintf(stderr, "PreviewSceneSetter called with non-array.\n");
-    return;
-  }
-
-  v8::Handle<v8::Array> array = v8::Handle<v8::Array>::Cast(value);
-  int length = array->Length();
-
-  std::vector<std::string> newPreviewScenes;
-  v8::Local<v8::Context> context = v8::Isolate::GetCurrent()->GetCurrentContext();
-
-  for (int i = 0; i < length; i++) {
-    v8::Local<v8::Value> element = array->Get(context, i).ToLocalChecked();
-
-    v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), value);
-    std::string previewSceneCPPString(*previewSceneUTF8);
-    newPreviewScenes[i] = previewSceneCPPString;
-  }
-
-  updateScenes(newPreviewScenes, programScenes);
-}
 
 void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes) {
   std::set<std::string> inactiveScenes;
