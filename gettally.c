@@ -35,8 +35,13 @@ int main(int argc, char *argv[]) {
 
 #if 1
   v8_setup();
+#if 1
   runScript(obs_websocket_js);
   runScript(gettally_js);
+#else
+  runScriptAsModule("obs_websocket_js", obs_websocket_js);
+  runScriptAsModule("gettally_js", gettally_js);
+#endif
 
   while (true) {
     usleep(100000);

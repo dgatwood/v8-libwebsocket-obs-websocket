@@ -1,5 +1,7 @@
 bin
 deps/libwebsockets
 deps/build
+junk
+password.js
 .DS_Store
 *.swp

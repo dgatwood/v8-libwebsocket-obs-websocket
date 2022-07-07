@@ -12,6 +12,11 @@ std::vector<std::string> programScenes;
 std::vector<std::string> previewScenes;
 void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes);
 
+v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
+                                           v8::Local<v8::String> specifier,
+                                           v8::Local<v8::FixedArray> import_assertions,
+                                           v8::Local<v8::Module> referrer);
+
 extern "C" {
 void setSceneIsProgram(const char *sceneName);
 void setSceneIsPreview(const char *sceneName);
@@ -114,6 +119,79 @@ void runScript(char *scriptString) {
   // Convert the result to an UTF8 string and print it.
   v8::String::Utf8Value utf8(v8::Isolate::GetCurrent(), result);
   printf("%s\n", *utf8);
+}
+
+bool runScriptAsModule(char *moduleName, char *scriptString) {
+  auto isolate = v8::Isolate::GetCurrent();
+
+  // Create a stack-allocated handle scope.
+  v8::HandleScope handle_scope(isolate);
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  context->Enter();
+
+  // Enter the context for compiling and running scripts.
+  v8::Context::Scope context_scope(context);
+
+  // Create a string containing the JavaScript source code.
+  // printf("%s\n", scriptString);
+  v8::Local<v8::String> sourceCode =
+      v8::String::NewFromUtf8(v8::Isolate::GetCurrent(), scriptString,
+                              v8::NewStringType::kNormal, strlen(scriptString))
+          .ToLocalChecked();
+
+  v8::ScriptOrigin origin(
+      isolate,
+      v8::String::NewFromUtf8(isolate, moduleName).ToLocalChecked() /* resource_name */,
+      0 /* resource_line_offset */,
+      0 /* resource_column_offset */, false /* resource_is_shared_cross_origin */,
+      -1 /* script_id */, v8::Local<v8::Value>() /* source_map_url */,
+      false /* resource_is_opaque */, false /* is_wasm */, true /* is_module*/
+      /* omitted Local< Data > host_defined_options=Local< Data >() */);
+
+  v8::ScriptCompiler::Source source(sourceCode, origin);
+
+  // Compile the source code.
+  v8::MaybeLocal<v8::Module> loadedModule =
+      // v8::Script::Compile(context, sourceCode).ToLocalChecked();
+      v8::ScriptCompiler::CompileModule(isolate, &source);
+
+
+  v8::Local<v8::Module> verifiedModule;
+  if (!loadedModule.ToLocal(&verifiedModule)) {
+    fprintf(stderr, "Error loading module!\n");
+    return false;
+  }
+
+  v8::Maybe<bool> instantiationResult =
+      verifiedModule->InstantiateModule(context, resolveCallback);
+  if (instantiationResult.IsNothing()) {
+    fprintf(stderr, "Unable to instantiate module.\n");
+    return false;
+  }
+
+  // Run the module to get the result.
+  v8::Local<v8::Value> result;
+  if (!verifiedModule->Evaluate(context).ToLocal(&result)) {
+    fprintf(stderr, "Module evaluation failed.\n");
+    return false;
+  }
+
+  // Run the script to get the result.
+  // v8::Local<v8::Value> result = script->Run(context).ToLocalChecked();
+
+  // Convert the result to a UTF8 string and print it.
+  v8::String::Utf8Value utf8(v8::Isolate::GetCurrent(), result);
+  printf("%s\n", *utf8);
+}
+
+// Stub method.  If this ever gets called, it will crash.
+v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
+                                           v8::Local<v8::String> specifier,
+                                           v8::Local<v8::FixedArray> import_assertions,
+                                           v8::Local<v8::Module> referrer) {
+  v8::Isolate* isolate = context->GetIsolate();
+  isolate->ThrowException(v8::String::NewFromUtf8(isolate, "Exception message").ToLocalChecked());
 }
 
 void v8_teardown(void) {
