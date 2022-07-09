@@ -2,7 +2,16 @@
 #include <set>
 #include <v8.h>
 
+#ifdef USE_NODE
+#include <node/node.h>
+#endif
+
 #include "v8_setup.h"
+
+// using namespace node;
+// using namespace v8;
+
+extern char *password;
 
 std::unique_ptr<v8::Platform> platform;
 // v8::Isolate *gIsolate;
@@ -11,11 +20,15 @@ v8::Local<v8::ObjectTemplate> globals;
 std::vector<std::string> programScenes;
 std::vector<std::string> previewScenes;
 void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes);
+void PasswordGetter(v8::Local<v8::String> property,
+              const v8::PropertyCallbackInfo<v8::Value>& info);
 
 v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
                                            v8::Local<v8::String> specifier,
                                            v8::Local<v8::FixedArray> import_assertions,
                                            v8::Local<v8::Module> referrer);
+
+void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args);
 
 extern "C" {
 void setSceneIsProgram(const char *sceneName);
@@ -25,7 +38,7 @@ void setSceneIsInactive(const char *sceneName);
 
 void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
 {
-  v8::Isolate* isolate = args.GetIsolate();
+  v8::Isolate *isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
 
   fprintf(stderr, "setProgramAndPreviewScenes called.\n");
@@ -66,8 +79,16 @@ void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
 void v8_setup(void) {
   v8::V8::InitializeICUDefaultLocation("viscaptz");
   v8::V8::InitializeExternalStartupData("viscaptz");
+
+#ifdef USE_NODE
+  std::unique_ptr<node::MultiIsolatePlatform> platform =
+      node::MultiIsolatePlatform::Create(4);
+  v8::V8::InitializePlatform(platform.get());
+#else
   platform = v8::platform::NewDefaultPlatform();
   v8::V8::InitializePlatform(platform.get());
+
+#endif
   v8::V8::Initialize();
 
   v8::Isolate::CreateParams create_params;
@@ -84,8 +105,14 @@ void v8_setup(void) {
 
   globals = v8::ObjectTemplate::New(gIsolate);
 
+  globals->SetAccessor(v8::String::NewFromUtf8(gIsolate, "obsPassword", v8::NewStringType::kNormal).ToLocalChecked(),
+                       PasswordGetter, nullptr);
+
   globals->Set(v8::String::NewFromUtf8(gIsolate, "setProgramAndPreviewScenes").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, setProgramAndPreviewScenes));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketConnectionID").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, getWebSocketConnectionID));
 
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
@@ -183,6 +210,8 @@ bool runScriptAsModule(char *moduleName, char *scriptString) {
   // Convert the result to a UTF8 string and print it.
   v8::String::Utf8Value utf8(v8::Isolate::GetCurrent(), result);
   printf("%s\n", *utf8);
+
+  return true;
 }
 
 // Stub method.  If this ever gets called, it will crash.
@@ -190,8 +219,9 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
                                            v8::Local<v8::String> specifier,
                                            v8::Local<v8::FixedArray> import_assertions,
                                            v8::Local<v8::Module> referrer) {
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate *isolate = context->GetIsolate();
   isolate->ThrowException(v8::String::NewFromUtf8(isolate, "Exception message").ToLocalChecked());
+  return v8::MaybeLocal<v8::Module>();
 }
 
 void v8_teardown(void) {
@@ -205,9 +235,16 @@ void v8_teardown(void) {
 
 #pragma mark - Synthesized getters and setters
 
-
-
-
+void PasswordGetter(v8::Local<v8::String> property,
+              const v8::PropertyCallbackInfo<v8::Value>& info) {
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+  fprintf(stderr, "PasswordGetter called.\n");
+  
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::String> passwordV8String =
+      v8::String::NewFromUtf8(isolate, password).ToLocalChecked();
+  info.GetReturnValue().Set(passwordV8String);
+}
 
 void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes) {
   std::set<std::string> inactiveScenes;
@@ -236,3 +273,94 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
     setSceneIsInactive(scene.c_str());
   }
 }
+
+#pragma mark - Websocket support
+
+// JavaScript methods to implement:
+//
+// + WebSocket(url, [ (protocolString | array of protocolString) ])
+// + close([code [, reason ]])
+// + send(data) - data is String, ArrayBuffer, Blob, TypedArray, or DataView
+// + addEventListener(type [, listener [, (optionsObject | useCapture) ])
+// + removeEventListener(type [, listener [, (optionsObject | useCapture) ])
+// + dispatchEvent(event)
+//
+// Events to implement:
+// + close
+// + error
+// + message
+// + open
+//
+// Properties to implement;
+//
+// + binaryType - property: either "blob" or "arraybuffer".
+// x bufferedAmount - read-only property: bytes queued for writing but not sent.
+// x extensions - read-only property: empty string or list of extensions from server.
+// - protocol - read-only property: the sub-protocol selected by the server.
+// - readyState - read-only property: 0 = connecting, 1 = connected, 2 = closing, 3 = closed.
+// + url - read-only property: the URL from the constructor call.
+
+
+// Support to add on C++ side:
+//
+// getWebSocketConnectionID
+// sendWebSocketData(this.internal_connection_id, data);
+// closeWebSocket(this.internal_connection_id);
+// setWebSocketProtocols(internal_connection_id, protocols)
+// getWebSocketBufferedAmount()
+// getWebSocketExtensions()
+// setWebSocketBinaryType(typeString
+//
+// On open, call:
+//
+// didOpen()
+//
+// When data is received, call:
+//
+// deliverMessage(data, origin)
+//
+// On error, call:
+//
+// didReceiveError()
+//
+// On close, call:
+//
+// close(code, reason)
+
+
+void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  static uint64_t connectionIdentifer = 0;
+
+  fprintf(stderr, "getWebSocketConnectionID called.\n");
+  args.GetReturnValue().Set(connectionIdentifer++);
+}
+
+
+// getWebSocketConnectionID
+
+
+
+// sendWebSocketData(this.internal_connection_id, data);
+
+
+
+// closeWebSocket(this.internal_connection_id);
+
+
+
+// setWebSocketProtocols(internal_connection_id, protocols)
+
+
+
+// getWebSocketBufferedAmount()
+
+
+
+// getWebSocketExtensions()
+
+
+
+// setWebSocketBinaryType(typeString
+
+
+

@@ -1,39 +1,35 @@
-const obs = new OBSWebSocket();
+var obs = undefined;
 
-var updateInitialScenes = async function() {
-  const {currentProgramSceneName} = await obs.call('GetCurrentProgramScene');
-  const {currentPreviewSceneName} = await obs.call('GetCurrentPreviewScene');
+function connectOBS() {
+  obs = new OBSWebSocket();
 
-  setProgramAndPreviewScenes([ currentPreviewSceneName ], [ currentProgramSceneName ]);
+  obs.on('Identified', () => {
+    console.log('Connection identified');
+    updateInitialScenes();
+  });
+
+  obs.on('CurrentSceneChanged', () => {
+    console.log('Current scene changed.');
+  });
+
+  obs.on('SwitchScenes', data => {
+    console.log('SwitchScenes', data);
+  });
+
+  obs.connect('ws://192.168.1.63:4455', obsPassword, {
+    eventSubscriptions: (1 << 2),  /* EventSubcription.Scenes - no idea why the constant won't load. */
+    rpcVersion: 1
+  }).then((value) => {
+    setProgramAndPreviewScenes(["OBS connected: "], [allKeys(value)]);
+    setProgramAndPreviewScenes(["WebSocket version: "], [value.obsWebSocketVersion]);
+    setProgramAndPreviewScenes(["RPC version: "], [value.negotiatedRpcVersion]);
+  }).catch((error) => {
+    // console.error("OBS connection failed: "+error);
+    setProgramAndPreviewScenes([ "OBS connection failed: "+allKeys(error) ], [ 
+        error.fileName + ":" + error.lineNumber + ":" + error.message  + error.stack ] );
+    setTimeout(connectOBS, 5000);
+  });
 }
-
-obs.on('Identified', () => {
-  console.log('Connection identified');
-  updateInitialScenes();
-});
-
-obs.on('CurrentSceneChanged', () => {
-  console.log('Current scene changed.');
-});
-
-obs.on('SwitchScenes', data => {
-  console.log('SwitchScenes', data);
-});
-
-obs.connect('ws://192.168.1.63:4455', obsPassword, {
-  eventSubscriptions: (1 << 2),  /* EventSubcription.Scenes - no idea why the constant won't load. */
-  rpcVersion: 1
-}).then((value) => {
-  console.log("OBS connected: "+value);
-  console.log("WebSocket version: "+value.obsWebSocketVersion);
-  console.log("RPC version: "+value.negotiatedRpcVersion);
-
-}).catch((error) => {
-  console.error("OBS connection failed: "+error);
-});
-
-// ProgramScenes = [ "one", "two", "three"];
-// PreviewScenes = [ "four", "five", "six"];
 
 function allKeys(unknownObject) {
   return allKeysSub(unknownObject, "");
@@ -53,10 +49,20 @@ function allKeysSub(unknownObject, indent) {
   return string;
 }
 
-// Uncomment to debug in Chrome.
-// function setProgramAndPreviewScenes(preview, program) {
-  // console.log("preview: " + allKeys(preview));
-  // console.log("program: " + allKeys(program));
-// }
+var updateInitialScenes = async function() {
+  const {currentProgramSceneName} = await obs.call('GetCurrentProgramScene');
+  const {currentPreviewSceneName} = await obs.call('GetCurrentPreviewScene');
 
+  setProgramAndPreviewScenes([ currentPreviewSceneName ], [ currentProgramSceneName ]);
+}
+
+connectOBS();
+
+// Uncomment to debug in Chrome.
+
+// ProgramScenes = [ "one", "two", "three"];
+// PreviewScenes = [ "four", "five", "six"];
 // setProgramAndPreviewScenes(PreviewScenes, ProgramScenes);
+
+// setProgramAndPreviewScenes([ obsPassword ], [ "B" ] );
+

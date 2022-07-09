@@ -1,5 +1,8 @@
+#include "bin/buffer.h"
 #include "bin/obs-websocket.h"
 #include "bin/gettally.h"
+// #include "bin/nextTick.h"
+// #include "bin/websocket_all_js.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,7 +26,13 @@ void subscribeToStateUpdates(void);
 // the returned pointer.
 char *generate_uuid_string(void);
 
+char *password = "";
+
 int main(int argc, char *argv[]) {
+
+  if (argc > 1) {
+    password = argv[1];
+  }
 
   // printf("%s", gettally_js);
   // printf("%s", obs_websocket_js);
@@ -37,9 +46,15 @@ int main(int argc, char *argv[]) {
   v8_setup();
 #if 1
   runScript(obs_websocket_js);
+  runScript(buffer_js);
+  // runScript(nextTick_js);
+  // runScript(websocket_all_js);
   runScript(gettally_js);
 #else
   runScriptAsModule("obs_websocket_js", obs_websocket_js);
+  runScriptAsModule("buffer_js", buffer_js);
+  // runScriptAsModule("nextTick_js", nextTick_js);
+  // runScriptAsModule("websocket_all_js", websocket_all_js);
   runScriptAsModule("gettally_js", gettally_js);
 #endif
 
