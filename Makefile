@@ -1,8 +1,7 @@
 
 CFLAGS=-DV8_COMPRESS_POINTERS -DV8_31BIT_SMIS_ON_64BIT_ARCH
 CXXFLAGS=-std=c++20
-LDFLAGS=-lv8 -lv8_libplatform -lv8_libbase -lc++ -L./deps/node-v16.16.0/out/Release -lnode
-# -lwebsockets
+LDFLAGS=-lv8 -lv8_libplatform -lv8_libbase -lc++ -lwebsockets
 
 # On Mac, at least with Homebrew, the cmake command builds x86_64 binaries
 # even on arm, so force our binaries to also use that architecture.  Ugh.

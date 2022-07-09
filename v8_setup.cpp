@@ -329,7 +329,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
 
 void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  static uint64_t connectionIdentifer = 0;
+  static uint32_t connectionIdentifer = 0;
 
   fprintf(stderr, "getWebSocketConnectionID called.\n");
   args.GetReturnValue().Set(connectionIdentifer++);
