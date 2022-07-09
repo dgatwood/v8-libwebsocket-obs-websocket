@@ -1,4 +1,6 @@
 #include <libplatform/libplatform.h>
+#include <libwebsockets.h>
+#include <map>
 #include <set>
 #include <v8.h>
 
@@ -12,6 +14,8 @@
 // using namespace v8;
 
 extern char *password;
+
+std::map<uint32_t, struct lws_client_connect_info> connectionMap;
 
 std::unique_ptr<v8::Platform> platform;
 // v8::Isolate *gIsolate;
@@ -31,10 +35,10 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
 void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args);
 void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
-void setWebSocketProtocols(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
+struct lws_client_connect_info connectWebSocket(std::string URL, std::vector<std::string> protocols);
 
 
 extern "C" {
@@ -60,24 +64,24 @@ void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
 
   v8::Handle<v8::Array> previewSceneArray = v8::Handle<v8::Array>::Cast(args[0]);
 
-  std::vector<std::string> newProgramScenes;
+  std::vector<std::string> newPreviewScenes;
 
   for (int i = 0; i < previewSceneArray->Length(); i++) {
     v8::Local<v8::Value> element = previewSceneArray->Get(context, i).ToLocalChecked();
-    v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), element);
-    std::string programSceneCPPString(*programSceneUTF8);
-    newProgramScenes.push_back(programSceneCPPString);
+    v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), element);
+    std::string previewSceneCPPString(*previewSceneUTF8);
+    newPreviewScenes.push_back(previewSceneCPPString);
   }
 
   v8::Handle<v8::Array> programSceneArray = v8::Handle<v8::Array>::Cast(args[1]);
 
-  std::vector<std::string> newPreviewScenes;
+  std::vector<std::string> newProgramScenes;
 
   for (int i = 0; i < programSceneArray->Length(); i++) {
     v8::Local<v8::Value> element = programSceneArray->Get(context, i).ToLocalChecked();
-    v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), element);
-    std::string previewSceneCPPString(*previewSceneUTF8);
-    newPreviewScenes.push_back(previewSceneCPPString);
+    v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), element);
+    std::string programSceneCPPString(*programSceneUTF8);
+    newProgramScenes.push_back(programSceneCPPString);
   }
 
   updateScenes(newPreviewScenes, newProgramScenes);
@@ -127,9 +131,6 @@ void v8_setup(void) {
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "closeWebSocket").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, closeWebSocket));
-
-  globals->Set(v8::String::NewFromUtf8(gIsolate, "setWebSocketProtocols").ToLocalChecked(),
-               v8::FunctionTemplate::New(gIsolate, setWebSocketProtocols));
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketBufferedAmount").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, getWebSocketBufferedAmount));
@@ -329,10 +330,9 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
 // Support to add on C++ side:
 //
-// getWebSocketConnectionID
+// getWebSocketConnectionID(this, URL, protocols)
 // sendWebSocketData(this.internal_connection_id, data)
 // closeWebSocket(this.internal_connection_id)
-// setWebSocketProtocols(internal_connection_id, protocols)
 // getWebSocketBufferedAmount()
 // getWebSocketExtensions()
 // setWebSocketBinaryType(typeString)
@@ -354,41 +354,116 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 // close(code, reason)
 
 
-// getWebSocketConnectionID
+// getWebSocketConnectionID(object, URL, protocolStringsArray)
 void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  static uint32_t connectionIdentifer = 0;
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::HandleScope scope(isolate);
+  static uint32_t connectionIdentifier = 0;
 
   fprintf(stderr, "getWebSocketConnectionID called.\n");
-  args.GetReturnValue().Set(connectionIdentifer++);
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  v8::Object *rawObject = *(args[0]->ToObject(context).ToLocalChecked());
+  // v8::Persistent<v8::Object> object = v8::Persistent<v8::Object>::New(isolate, rawObject);
+
+  v8::String::Utf8Value URLV8(v8::Isolate::GetCurrent(), args[1]);
+  std::string URL(*URLV8);
+
+  v8::Handle<v8::Array> protocolStringsArray = v8::Handle<v8::Array>::Cast(args[2]);
+
+  std::vector<std::string> protocolStringsStdArray;
+
+  for (int i = 0; i < protocolStringsArray->Length(); i++) {
+    v8::Local<v8::Value> element = protocolStringsArray->Get(context, i).ToLocalChecked();
+    v8::String::Utf8Value protocolStringUTF8(v8::Isolate::GetCurrent(), element);
+    std::string protocolString(*protocolStringUTF8);
+    protocolStringsStdArray.push_back(protocolString);
+  }
+
+  connectionMap[connectionIdentifier] = connectWebSocket(URL, protocolStringsStdArray);
+
+  args.GetReturnValue().Set(connectionIdentifier++);
 }
+
+void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length);
 
 // sendWebSocketData(this.internal_connection_id, data);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
+  // In theory, we need to support String, ArrayBuffer, Blob, TypedArray,
+  // and DataView objects as the data object (args[1]).
+  //
+  // For now, support strings and byte arrays.  Nothing else.  Eventually,
+  // we will convert everything else to one of those forms on the JavaScript
+  // side.
+  if (args[1]->IsString()) { 
+    v8::String::Utf8Value protocolStringUTF8(v8::Isolate::GetCurrent(), args[1]->ToString(context).ToLocalChecked());
+    std::string protocolString(*protocolStringUTF8);
+    sendWebSocketData(connectionID, (uint8_t *)protocolString.c_str(), protocolString.length());
+  } else if (args[1]->IsArray()) {
+    v8::Handle<v8::Array> byteArray = v8::Handle<v8::Array>::Cast(args[1]);
+
+    uint8_t *data = (uint8_t *)malloc(byteArray->Length());
+    for (int i = 0; i < byteArray->Length(); i++) {
+      v8::Handle<v8::Uint32> byteValue = v8::Handle<v8::Uint32>::Cast(byteArray->Get(context, i).ToLocalChecked());
+      data[i] = byteValue->Uint32Value(context).ToChecked() & 0xff;
+    }
+    sendWebSocketData(connectionID, data, byteArray->Length());
+    free(data);
+  }
 }
 
 // closeWebSocket(this.internal_connection_id);
 void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
-
-}
-
-// setWebSocketProtocols(internal_connection_id, protocols)
-void setWebSocketProtocols(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
 }
 
 // getWebSocketBufferedAmount()
 void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
 }
 
 // getWebSocketExtensions()
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
 }
 
 // setWebSocketBinaryType(typeString
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
+
+  v8::String::Utf8Value binaryTypeStringV8(v8::Isolate::GetCurrent(), args[1]->ToString(context).ToLocalChecked());
+  std::string binaryTypeString(*binaryTypeStringV8);
+
+  // Update with data:
+  // uint32_t connectionID
+  // string binaryTypeString
+}
+
+struct lws_client_connect_info connectWebSocket(std::string URL, std::vector<std::string> protocols) {
 
 }
 
+void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length) {
+
+}

@@ -7,7 +7,7 @@ LDFLAGS=-lv8 -lv8_libplatform -lv8_libbase -lc++ -lwebsockets
 # even on arm, so force our binaries to also use that architecture.  Ugh.
 UNAME := $(shell uname)
 ifeq ($(UNAME), Darwin)
-    CFLAGS+=-arch x86_64 -O0 -g
+    CFLAGS+=-arch x86_64 -O0 -g -I/usr/local/Cellar/openssl@1.1/1.1.1o/include/
     CXXFLAGS+=-arch x86_64
     LDFLAGS+=-arch x86_64
 endif
@@ -27,10 +27,6 @@ bin/translatejstocstring: translatejstocstring.c
 bin/obs-websocket.h: obs-websocket.js bin/translatejstocstring
 	make makebin;
 	cat obs-websocket.js | bin/translatejstocstring obs_websocket_js > bin/obs-websocket.h
-
-bin/websocket_all_js.h: websocket_all.js bin/translatejstocstring
-	make makebin;
-	cat websocket_all.js | bin/translatejstocstring websocket_all_js > bin/websocket_all_js.h
 
 bin/gettally.h: gettally.js bin/translatejstocstring
 	make makebin;
