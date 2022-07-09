@@ -29,6 +29,13 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
                                            v8::Local<v8::Module> referrer);
 
 void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args);
+void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args);
+void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
+void setWebSocketProtocols(const v8::FunctionCallbackInfo<v8::Value>& args);
+void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args);
+void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
+void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
+
 
 extern "C" {
 void setSceneIsProgram(const char *sceneName);
@@ -113,6 +120,25 @@ void v8_setup(void) {
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketConnectionID").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, getWebSocketConnectionID));
+
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "sendWebSocketData").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, sendWebSocketData));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "closeWebSocket").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, closeWebSocket));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "setWebSocketProtocols").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, setWebSocketProtocols));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketBufferedAmount").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, getWebSocketBufferedAmount));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketExtensions").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, getWebSocketExtensions));
+
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "setWebSocketBinaryType").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, setWebSocketBinaryType));
 
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
@@ -304,12 +330,12 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 // Support to add on C++ side:
 //
 // getWebSocketConnectionID
-// sendWebSocketData(this.internal_connection_id, data);
-// closeWebSocket(this.internal_connection_id);
+// sendWebSocketData(this.internal_connection_id, data)
+// closeWebSocket(this.internal_connection_id)
 // setWebSocketProtocols(internal_connection_id, protocols)
 // getWebSocketBufferedAmount()
 // getWebSocketExtensions()
-// setWebSocketBinaryType(typeString
+// setWebSocketBinaryType(typeString)
 //
 // On open, call:
 //
@@ -328,6 +354,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 // close(code, reason)
 
 
+// getWebSocketConnectionID
 void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
   static uint32_t connectionIdentifer = 0;
 
@@ -335,32 +362,33 @@ void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
   args.GetReturnValue().Set(connectionIdentifer++);
 }
 
-
-// getWebSocketConnectionID
-
-
-
 // sendWebSocketData(this.internal_connection_id, data);
+void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
 // closeWebSocket(this.internal_connection_id);
+void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
 // setWebSocketProtocols(internal_connection_id, protocols)
+void setWebSocketProtocols(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
 // getWebSocketBufferedAmount()
+void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
 // getWebSocketExtensions()
+void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
 // setWebSocketBinaryType(typeString
+void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-
+}
 
