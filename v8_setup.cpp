@@ -1,8 +1,14 @@
+#define _GNU_SOURCE  // For asprintf
+
 #include <libplatform/libplatform.h>
 #include <libwebsockets.h>
 #include <map>
 #include <set>
+#include <stdio.h>
 #include <v8.h>
+
+// Might work on Linux.  Doesn't work in macOS.
+#undef SUPPORT_DEFLATE
 
 #ifdef USE_NODE
 #include <node/node.h>
@@ -15,7 +21,32 @@
 
 extern char *password;
 
-std::map<uint32_t, struct lws_client_connect_info> connectionMap;
+typedef struct websocketsDataItem {
+  uint8_t *buf;
+  size_t length;
+} websocketsDataItem_t;
+
+typedef struct websocketsDataItemChain {
+  websocketsDataItem_t item;
+  struct websocketsDataItemChain *next;
+} websocketsDataItemChain_t;
+
+
+class DataProvider {
+  public:
+    void addPendingData(websocketsDataItem_t item);
+    bool getPendingData(websocketsDataItem_t *returnItem);
+  private:
+    std::mutex mutex;
+    websocketsDataItemChain_t *firstItem = NULL;
+};
+
+class webSocketsContextData {
+  DataProvider incomingData;
+  DataProvider outgoingData;
+};
+
+std::map<uint32_t, webSocketsContextData *> connectionData;
 
 std::unique_ptr<v8::Platform> platform;
 // v8::Isolate *gIsolate;
@@ -38,10 +69,10 @@ void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
-struct lws_client_connect_info connectWebSocket(std::string hostName, int32_t port, std::string path,
-                                                std::string search, std::string hash,
-                                                std::vector<std::string> protocols);
+bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
+                      uint32_t connectionID);
 
+uint32_t connectionIDForWSI(struct lws *wsi);
 
 extern "C" {
 void setSceneIsProgram(const char *sceneName);
@@ -126,7 +157,6 @@ void v8_setup(void) {
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "connectWebSocket").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, connectWebSocket));
-
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "sendWebSocketData").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, sendWebSocketData));
@@ -332,8 +362,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
 // Support to add on C++ side:
 //
-// connectWebSocket(this, theLocation.host, theLocation.port, theLocation.pathname, 
-//                  theLocation.search, theLocation.hash, protocols)
+// connectWebSocket(this, URL, protocols)
 // sendWebSocketData(this.internal_connection_id, data)
 // closeWebSocket(this.internal_connection_id)
 // getWebSocketBufferedAmount()
@@ -358,8 +387,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
 
 // Open a socket.
-// connectWebSocket(this, theLocation.host, theLocation.port, theLocation.pathname, 
-//                  theLocation.search, theLocation.hash, protocols)
+// connectWebSocket(this, URL, protocols)
 void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Isolate *isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
@@ -372,20 +400,8 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Object *rawObject = *(args[0]->ToObject(context).ToLocalChecked());
   // v8::Persistent<v8::Object> object = v8::Persistent<v8::Object>::New(isolate, rawObject);
 
-  v8::String::Utf8Value hostV8(v8::Isolate::GetCurrent(), args[1]);
-  std::string hostName(*hostV8);
-
-  v8::Handle<v8::Uint32> portV8 = v8::Handle<v8::Uint32>::Cast(args[2]);
-  uint32_t port = portV8->Uint32Value(context).ToChecked();
-
-  v8::String::Utf8Value pathV8(v8::Isolate::GetCurrent(), args[3]);
-  std::string path(*pathV8);
-
-  v8::String::Utf8Value searchV8(v8::Isolate::GetCurrent(), args[4]);
-  std::string search(*searchV8);
-
-  v8::String::Utf8Value hashV8(v8::Isolate::GetCurrent(), args[5]);
-  std::string hash(*hashV8);
+  v8::String::Utf8Value URLV8(v8::Isolate::GetCurrent(), args[1]);
+  std::string URL(*URLV8);
 
   v8::Handle<v8::Array> protocolStringsArray = v8::Handle<v8::Array>::Cast(args[2]);
 
@@ -398,9 +414,14 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
     protocolStringsStdArray.push_back(protocolString);
   }
 
-  connectionMap[connectionIdentifier] = connectWebSocket(hostName, port, path, search, hash, protocolStringsStdArray);
+  bool success = connectWebSocket(URL, protocolStringsStdArray, connectionIdentifier);
 
-  args.GetReturnValue().Set(connectionIdentifier++);
+  if (success) {
+    args.GetReturnValue().Set(connectionIdentifier++);
+    connectionData[connectionIdentifier] = new webSocketsContextData();
+  } else {
+    args.GetReturnValue().Set(-1);
+  }
 }
 
 void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8);
@@ -477,12 +498,230 @@ void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
   // string binaryTypeString
 }
 
-struct lws_client_connect_info connectWebSocket(std::string hostName, int32_t port, std::string path,
-                                                std::string search, std::string hash,
-                                                std::vector<std::string> protocols) {
+// Makes a permanent copy of a C++ string using malloc.
+char *mallocString(std::string string) {
+  char *buf = NULL;
+  asprintf(&buf, "%s", string.c_str());
+  return buf;
+}
 
+static const struct lws_extension exts[] = {
+#ifdef SUPPORT_DEFLATE
+	{
+		"permessage-deflate",
+		lws_extension_callback_pm_deflate,
+		"permessage-deflate; client_no_context_takeover"
+	},
+	{
+		"deflate-frame",
+		lws_extension_callback_pm_deflate,
+		"deflate_frame"
+	},
+#endif
+	{ NULL, NULL, NULL /* terminator */ }
+};
+
+int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
+
+struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
+  size_t count = protocols.size();
+  struct lws_protocols *data = (struct lws_protocols *)malloc(sizeof(struct lws_protocols) * (count + 1));
+
+  for (size_t i = 0; i < count; i++) {
+    data[i].name = mallocString(protocols[i]);
+    data[i].callback = websocketLWSCallback;
+    data[i].per_session_data_size = 0;
+    data[i].rx_buffer_size = 65536;
+    data[i].id = 0;
+    data[i].user = NULL,
+    data[i].tx_packet_size = 0;
+  }
+
+  data[count] = LWS_PROTOCOL_LIST_TERM;
+
+  return data;
+};
+
+bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
+                                                uint32_t connectionID) {
+  struct lws_context_creation_info info;
+
+  bzero(&info, sizeof(info));
+
+  info.protocols = createProtocols(protocols);
+
+  info.uid = -1;
+  info.gid = -1;
+  info.extensions = exts;
+  info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+  info.options |= LWS_SERVER_OPTION_H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW;
+
+  struct lws_context *context = lws_create_context(&info);
+
+  struct lws_client_connect_info connectInfo;
+  bzero(&connectInfo, sizeof(connectInfo));
+
+  uint32_t *connectionIDRef = (uint32_t *)malloc(sizeof(uint32_t));
+  *connectionIDRef = connectionID;
+  connectInfo.userdata = (void *)connectionIDRef;
+  
+
+  const char *URLProtocol = NULL, *URLPath = NULL;
+  char *tempURL = mallocString(URL);
+  if (lws_parse_uri(tempURL, &URLProtocol, &connectInfo.address, &connectInfo.port, &URLPath)) {
+    return false;
+  }
+
+  bool use_ssl = false;
+  if (!strcmp(URLProtocol, "https") || !strcmp(URLProtocol, "wss")) {
+    use_ssl = LCCSCF_USE_SSL;
+  }
+
+  /* Add a leading / on the path if it is missing. */
+  char *path = NULL;
+  asprintf(&path, "%s%s", (URLPath[0] != '/') ? "/" : "", URLPath);
+  connectInfo.path = path;
+
+  connectInfo.context = context;
+  connectInfo.ssl_connection = use_ssl;
+  connectInfo.host = connectInfo.address;
+  connectInfo.origin = connectInfo.address;
+  connectInfo.ietf_version_or_minus_one = -1;
+
+  // Probably don't do any of this.
+  // connectInfo.method = "POST";
+  // connectInfo.method = "GET";
+  // connectInfo.method = "RAW";
+
+  connectInfo.method = "RAW";
+  connectInfo.protocol = mallocString(protocols[0]);
+
+  lws_client_connect_via_info(&connectInfo);
+  free(tempURL);
+
+  return true;
 }
 
 void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8) {
 
+}
+
+// States:
+// 0 = Connecting
+// 1 = Connected
+// 2 = Closing
+// 3 = Closed
+enum {
+  kConnectionStateConnecting = 0,
+  kConnectionStateConnected = 1,
+  kConnectionStateClosing = 2,
+  kConnectionStateClosed = 3
+};
+
+void setConnectionState(uint32_t connectionID, int state) {
+
+}
+
+void callConnectionError() {
+  // Call didReceiveError on object.
+
+}
+
+int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
+  uint32_t connectionID = connectionIDForWSI(wsi);
+
+  switch (reason) {
+    case LWS_CALLBACK_CLIENT_ESTABLISHED:
+      setConnectionState(connectionID, kConnectionStateConnected);
+      break;
+    case LWS_CALLBACK_CLOSED:
+      setConnectionState(connectionID, kConnectionStateClosed);
+      break;
+    case LWS_CALLBACK_CLIENT_RECEIVE:
+      // @@@
+
+      // ((char *)in)[len] = '\0';
+      // lwsl_info("rx %d '%s'\n", (int)len, (char *)in);
+      // break;
+
+      break;
+    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+      setConnectionState(connectionID, kConnectionStateClosed);
+      break;
+    case LWS_CALLBACK_CLIENT_WRITEABLE:
+      // @@@
+
+
+      break;
+    case LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED:
+#ifdef SUPPORT_DEFLATE
+      if ((strcmp((const char *)in, "deflate-stream") == 0) &&
+        deny_deflate) {
+          lwsl_notice("denied deflate-stream extension\n");
+          return 1;
+      }
+      if ((strcmp((const char *)in, "x-webkit-deflate-frame") == 0)) {
+        return 1;
+      }
+      if ((strcmp((const char *)in, "deflate-frame") == 0)) {
+        return 1;
+      }
+#endif
+      return 0;
+    case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
+      // If certs don't verify on their own, let them fail.
+      return 0;
+
+    // Ignore all of these.
+    case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
+    case LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ:
+    case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER:
+    case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
+    case LWS_CALLBACK_COMPLETED_CLIENT_HTTP:
+    default:
+        break;
+  }
+  return 0;
+}
+
+uint32_t connectionIDForWSI(struct lws *wsi) {
+  struct lws_context *context = lws_get_context(wsi);
+  uint32_t *connectionIDRef = (uint32_t *)lws_context_user(context);
+  return *connectionIDRef;
+}
+
+#pragma mark - Data provider methods
+
+void DataProvider::addPendingData(websocketsDataItem_t item) {
+  std::lock_guard<std::mutex> guard(this->mutex);
+
+  websocketsDataItemChain_t *chainItem =
+      (websocketsDataItemChain_t *)malloc(sizeof(websocketsDataItemChain_t));
+  chainItem->item = item;
+  chainItem->next = nullptr;
+
+  if (this->firstItem == nullptr) {
+    this->firstItem = chainItem;
+  } else {
+    websocketsDataItemChain_t *position = this->firstItem;
+    while (position && position->next) {
+      position = position->next;
+    }
+    position->next = chainItem;
+  }
+}
+
+bool DataProvider::getPendingData(websocketsDataItem_t *returnItem) {
+  std::lock_guard<std::mutex> guard(this->mutex);
+
+  websocketsDataItemChain_t *chainItem = this->firstItem;
+  if (chainItem == nullptr) {
+    return false;
+  }
+  *returnItem = chainItem->item;
+  this->firstItem = chainItem->next;
+
+  free(chainItem);
+
+  return true;
 }

@@ -21,12 +21,8 @@ class WebSocket {
       configurable: true
     });
 
-    const theLocation = new Location();
-    theLocation.assign(url);
-
     const internal_connection_id =
-        connectWebSocket(this, theLocation.host, theLocation.port, theLocation.pathname,
-                         theLocation.search, theLocation.hash, protocols);
+        connectWebSocket(this, url, protocols);
     Object.defineProperty(this, "internal_connection_id", {
       value: internal_connection_id,
       writable: false,
