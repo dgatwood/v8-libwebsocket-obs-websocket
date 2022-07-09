@@ -32,13 +32,15 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
                                            v8::Local<v8::FixedArray> import_assertions,
                                            v8::Local<v8::Module> referrer);
 
-void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args);
+void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args);
 void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
-struct lws_client_connect_info connectWebSocket(std::string URL, std::vector<std::string> protocols);
+struct lws_client_connect_info connectWebSocket(std::string hostName, int32_t port, std::string path,
+                                                std::string search, std::string hash,
+                                                std::vector<std::string> protocols);
 
 
 extern "C" {
@@ -122,8 +124,8 @@ void v8_setup(void) {
   globals->Set(v8::String::NewFromUtf8(gIsolate, "setProgramAndPreviewScenes").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, setProgramAndPreviewScenes));
 
-  globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketConnectionID").ToLocalChecked(),
-               v8::FunctionTemplate::New(gIsolate, getWebSocketConnectionID));
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "connectWebSocket").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, connectWebSocket));
 
 
   globals->Set(v8::String::NewFromUtf8(gIsolate, "sendWebSocketData").ToLocalChecked(),
@@ -330,7 +332,8 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
 // Support to add on C++ side:
 //
-// getWebSocketConnectionID(this, URL, protocols)
+// connectWebSocket(this, theLocation.host, theLocation.port, theLocation.pathname, 
+//                  theLocation.search, theLocation.hash, protocols)
 // sendWebSocketData(this.internal_connection_id, data)
 // closeWebSocket(this.internal_connection_id)
 // getWebSocketBufferedAmount()
@@ -354,21 +357,35 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 // close(code, reason)
 
 
-// getWebSocketConnectionID(object, URL, protocolStringsArray)
-void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
+// Open a socket.
+// connectWebSocket(this, theLocation.host, theLocation.port, theLocation.pathname, 
+//                  theLocation.search, theLocation.hash, protocols)
+void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Isolate *isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
   static uint32_t connectionIdentifier = 0;
 
-  fprintf(stderr, "getWebSocketConnectionID called.\n");
+  fprintf(stderr, "connectWebSocket called.\n");
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
   v8::Object *rawObject = *(args[0]->ToObject(context).ToLocalChecked());
   // v8::Persistent<v8::Object> object = v8::Persistent<v8::Object>::New(isolate, rawObject);
 
-  v8::String::Utf8Value URLV8(v8::Isolate::GetCurrent(), args[1]);
-  std::string URL(*URLV8);
+  v8::String::Utf8Value hostV8(v8::Isolate::GetCurrent(), args[1]);
+  std::string hostName(*hostV8);
+
+  v8::Handle<v8::Uint32> portV8 = v8::Handle<v8::Uint32>::Cast(args[2]);
+  uint32_t port = portV8->Uint32Value(context).ToChecked();
+
+  v8::String::Utf8Value pathV8(v8::Isolate::GetCurrent(), args[3]);
+  std::string path(*pathV8);
+
+  v8::String::Utf8Value searchV8(v8::Isolate::GetCurrent(), args[4]);
+  std::string search(*searchV8);
+
+  v8::String::Utf8Value hashV8(v8::Isolate::GetCurrent(), args[5]);
+  std::string hash(*hashV8);
 
   v8::Handle<v8::Array> protocolStringsArray = v8::Handle<v8::Array>::Cast(args[2]);
 
@@ -381,12 +398,12 @@ void getWebSocketConnectionID(const v8::FunctionCallbackInfo<v8::Value>& args) {
     protocolStringsStdArray.push_back(protocolString);
   }
 
-  connectionMap[connectionIdentifier] = connectWebSocket(URL, protocolStringsStdArray);
+  connectionMap[connectionIdentifier] = connectWebSocket(hostName, port, path, search, hash, protocolStringsStdArray);
 
   args.GetReturnValue().Set(connectionIdentifier++);
 }
 
-void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length);
+void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8);
 
 // sendWebSocketData(this.internal_connection_id, data);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
@@ -404,7 +421,7 @@ void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
   if (args[1]->IsString()) { 
     v8::String::Utf8Value protocolStringUTF8(v8::Isolate::GetCurrent(), args[1]->ToString(context).ToLocalChecked());
     std::string protocolString(*protocolStringUTF8);
-    sendWebSocketData(connectionID, (uint8_t *)protocolString.c_str(), protocolString.length());
+    sendWebSocketData(connectionID, (uint8_t *)protocolString.c_str(), protocolString.length(), true);
   } else if (args[1]->IsArray()) {
     v8::Handle<v8::Array> byteArray = v8::Handle<v8::Array>::Cast(args[1]);
 
@@ -413,7 +430,7 @@ void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
       v8::Handle<v8::Uint32> byteValue = v8::Handle<v8::Uint32>::Cast(byteArray->Get(context, i).ToLocalChecked());
       data[i] = byteValue->Uint32Value(context).ToChecked() & 0xff;
     }
-    sendWebSocketData(connectionID, data, byteArray->Length());
+    sendWebSocketData(connectionID, data, byteArray->Length(), false);
     free(data);
   }
 }
@@ -460,10 +477,12 @@ void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
   // string binaryTypeString
 }
 
-struct lws_client_connect_info connectWebSocket(std::string URL, std::vector<std::string> protocols) {
+struct lws_client_connect_info connectWebSocket(std::string hostName, int32_t port, std::string path,
+                                                std::string search, std::string hash,
+                                                std::vector<std::string> protocols) {
 
 }
 
-void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length) {
+void sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8) {
 
 }
