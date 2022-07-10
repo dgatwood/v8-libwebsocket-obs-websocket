@@ -129,7 +129,7 @@ class WebSocket {
   }
 
   _connectionDidReceiveData(data) {
-    // @@@
+    this.deliverMessage(data, this.url);
   }
 
   _connectionDidClose(code, reason) {

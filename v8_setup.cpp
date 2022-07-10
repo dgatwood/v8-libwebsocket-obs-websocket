@@ -902,25 +902,30 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
 
   switch (reason) {
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
       setConnectionState(connectionID, kConnectionStateConnected);
       break;
     case LWS_CALLBACK_CLOSED:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLOSED\n");
       setConnectionState(connectionID, kConnectionStateClosed);
       dataProviderGroup->didCloseConnection = true;
       break;
     case LWS_CALLBACK_CLIENT_RECEIVE:
     {
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_RECEIVE\n");
       WebSocketsDataItem *item = new WebSocketsDataItem((uint8_t *)in, length, true);
       dataProviderGroup->incomingData.addPendingData(item);
 
       break;
     }
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_CONNECTION_ERROR\n");
       callConnectionError(connectionID);
       setConnectionState(connectionID, kConnectionStateClosed);
       break;
     case LWS_CALLBACK_CLIENT_WRITEABLE:
     {
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_WRITEABLE\n");
       WebSocketsDataItem *item = NULL;
       if (dataProviderGroup->outgoingData.getPendingData(&item)) {
         size_t bytesWritten = (int)lws_write(wsi, (unsigned char *)item->GetBuf(),
@@ -936,6 +941,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       break;
     }
     case LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED\n");
 #ifdef SUPPORT_DEFLATE
       if ((strcmp((const char *)in, "deflate-stream") == 0) &&
         deny_deflate) {
@@ -956,6 +962,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
 
     case LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL:
     {
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL\n");
       const struct lws_protocols *protocol = lws_get_protocol(wsi);
       dataProviderGroup->activeProtocol = new std::string(protocol->name);
       break;
