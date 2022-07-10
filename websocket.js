@@ -30,7 +30,6 @@ class WebSocket {
       configurable: true
     });
 
-    this.readyState = WebSocket.STATE_CLOSED;
     this.lastEventID = 0;
 
     this.openEventListeners = new Array();
@@ -158,6 +157,10 @@ class WebSocket {
   }
 
   internal_binary_type = "blob";
+
+  get readyState() {
+    return getWebSocketConnectionState(this.internal_connection_id);
+  }
 
   get binaryType() {
     return this.internal_binary_type;
