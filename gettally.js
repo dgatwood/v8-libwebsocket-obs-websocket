@@ -1,5 +1,38 @@
 var obs = undefined;
 
+var test_mode = 1;
+
+if (test_mode) {
+  // let socket = new WebSocket("wss://javascript.info/article/websocket/demo/hello");
+  // let socket = new WebSocket("ws://javascript.info/article/websocket/demo/hello");
+  let socket = new WebSocket("ws://localhost:8081/ws");
+
+  socket.onopen = function(e) {
+    console.log("[open] Connection established");
+    console.log("Sending to server");
+    socket.send("My name is John");
+  };
+
+  socket.onmessage = function(event) {
+    console.log(`[message] Data received from server: ${event.data}`);
+  };
+
+  socket.onclose = function(event) {
+    if (event.wasClean) {
+      console.log(`[close] Connection closed cleanly, code=${event.code} reason=${event.reason}`);
+    } else {
+      // e.g. server process killed or network down
+      // event.code is usually 1006 in this case
+      console.log('[close] Connection died');
+    }
+  };
+
+  socket.onerror = function(error) {
+    console.log(`[error] ${error.message}`);
+  };
+}
+
+
 function connectOBS() {
   obs = new OBSWebSocket();
 
@@ -56,7 +89,12 @@ var updateInitialScenes = async function() {
   setProgramAndPreviewScenes([ currentPreviewSceneName ], [ currentProgramSceneName ]);
 }
 
-connectOBS();
+if (!test_mode) {
+  connectOBS();
+}
+
+
+
 
 // Uncomment to debug in Chrome.
 

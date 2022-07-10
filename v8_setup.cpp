@@ -11,6 +11,10 @@
 // Might work on Linux.  Doesn't work in macOS.
 #undef SUPPORT_DEFLATE
 
+// Can't figure out how to determine when this is needed, and lots
+// of websockets code expects strings, so....
+#undef SEND_AS_BINARY
+
 #ifdef USE_NODE
 #include <node/node.h>
 #endif
@@ -60,12 +64,14 @@ typedef struct websocketsDataItemChain {
 
 class DataProvider {
   public:
+    DataProvider(const char *name);
     void addPendingData(WebSocketsDataItem *item);
     bool getPendingData(WebSocketsDataItem **returnItem);
     uint32_t PendingBytes(void);
     void SetWSI(struct lws *wsi);
+    const char *name;
   private:
-    std::mutex mutex;
+    std::recursive_mutex mutex;
     websocketsDataItemChain_t *firstItem = NULL;
     struct lws *wsi = nullptr;
 };
@@ -73,17 +79,22 @@ class DataProvider {
 class WebSocketsContextData {
   public:
     WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
-                          struct lws_protocols * protocols);
+                          struct lws_protocols * protocols, 
+                          v8::Isolate *isolate);
     ~WebSocketsContextData(void);
 
     v8::Persistent<v8::Object> *jsObject = nullptr;
 
-    DataProvider incomingData;
-    DataProvider outgoingData;
+    DataProvider incomingData = DataProvider("incomingData");
+    DataProvider outgoingData = DataProvider("outgoingData");
+
+    v8::Isolate *isolate;
 
     bool isBinary = false;
+
     bool shouldCloseConnection = false;
-    bool didCloseConnection = false;
+    bool connectionDidOpen = false;
+    bool connectionDidClose = false;
     bool hasConnectionError = false;
 
     std::string *activeProtocolName = nullptr;
@@ -98,9 +109,11 @@ class WebSocketsContextData {
 };
 
 WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
-                                             struct lws_protocols * protocols) {
+                                             struct lws_protocols * protocols,
+                                             v8::Isolate *isolate) {
   this->jsObject = jsObject;
   this->protocols = protocols;
+  this->isolate = isolate;
 }
 
 WebSocketsContextData::~WebSocketsContextData(void) {
@@ -119,8 +132,9 @@ WebSocketsContextData::~WebSocketsContextData(void) {
 }
 
 void WebSocketsContextData::SetWSI(struct lws *wsi) {
+  fprintf(stderr, "Top level: Setting WSI to 0x%p\n", wsi);
   this->wsi = wsi;
-  this->incomingData.SetWSI(wsi);
+  this->outgoingData.SetWSI(wsi);
 }
 
 void setConnectionState(uint32_t connectionID, int state);
@@ -268,43 +282,58 @@ void *v8_setup(void) {
   return (void *)gIsolate;
 }
 
+void callConnectionDidOpen(int connectionID, v8::Isolate *isolate);
 void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
                             std::string *reason);
 void callHasConnectionError(int connectionID, v8::Isolate *isolate);
 void sendPendingDataToClient(int connectionID, v8::Isolate *isolate);
 
 void v8_runLoopCallback(void *isolateVoid) {
+  fprintf(stderr, "@@@ v8_runLoopCallback\n");
+
   v8::Isolate *isolate = (v8::Isolate *)isolateVoid;
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
 
   std::vector<int32_t> connectionIDsToDelete;
 
-  int contextWaitTime = MAX(500 / connectionData.size(), 1);
+  int connectionCount = MAX(connectionData.size(), 1);
+  int contextWaitTime = MAX(500 / connectionCount, 1);
 
   for (std::pair<int32_t, WebSocketsContextData *> element :
        connectionData) {
     int32_t connectionID = element.first;
     WebSocketsContextData *connection = element.second;
-    if (connection->didCloseConnection) {
+    if (connection->connectionDidClose) {
+      connection->connectionDidClose = false;
       callConnectionDidClose(connectionID, isolate, connection->codeNumber,
                              connection->reason);
       connectionIDsToDelete.push_back(connectionID);
       continue;
     }
+    if (connection->connectionDidOpen) {
+      connection->connectionDidOpen = false;
+      callConnectionDidOpen(connectionID, isolate);
+      continue;
+    }
     if (connection->hasConnectionError) {
+      connection->hasConnectionError = false;
       callHasConnectionError(connectionID, isolate);
       continue;
     }
 
     if (connection->wsi != nullptr) {
       struct lws_context *context = lws_get_context(connection->wsi);
+fprintf(stderr, "Waiting for events (%d milliseconds)\n", contextWaitTime);
       lws_service(context, contextWaitTime);
+fprintf(stderr, "Done waiting for events\n");
     } else {
       fprintf(stderr, "Connection %d ignored because wsi is NULL\n", connectionID);
     }
 
     if (connection->incomingData.PendingBytes() > 0) {
+      fprintf(stderr, "@@@ Sending data to client.\n");
       sendPendingDataToClient(connectionID, isolate);
+      fprintf(stderr, "@@@ Done.\n");
     }
   }
   for (int32_t connectionID : connectionIDsToDelete) {
@@ -505,7 +534,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 //
 // On open, call:
 //
-// didOpen()
+// _didOpen()
 //
 // When data is received, call:
 //
@@ -552,7 +581,7 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   struct lws_protocols *protocols = createProtocols(protocolStringsStdArray);
   connectionData[newConnectionIdentifier] =
-      new WebSocketsContextData(persistentObject, protocols);
+      new WebSocketsContextData(persistentObject, protocols, isolate);
   bool success = connectWebSocket(URL, protocols, newConnectionIdentifier);
 
   args.GetReturnValue().Set(newConnectionIdentifier++);
@@ -728,7 +757,7 @@ struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
 };
 
 bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
-                                                uint32_t connectionID) {
+                      uint32_t connectionID) {
   struct lws_context_creation_info info;
 
   bzero(&info, sizeof(info));
@@ -785,7 +814,7 @@ bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
   // connectInfo.method = "GET";
   // connectInfo.method = "RAW";
 
-  connectInfo.method = "RAW";
+  connectInfo.method = NULL; // "RAW";
   // connectInfo.protocol = mallocString(protocols[0]);
 
   lws_client_connect_via_info(&connectInfo);
@@ -804,6 +833,7 @@ bool sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bo
   WebSocketsDataItem *item = new WebSocketsDataItem(data, length, !isUTF8);
 
   if (dataProviderGroup == nullptr) {
+    fprintf(stderr, "No provider group.  Failing.\n");
     return false;
   }
   dataProviderGroup->outgoingData.addPendingData(item);
@@ -846,6 +876,23 @@ void callConnectionError(uint32_t connectionID) {
   }
 }
 
+void callConnectionDidOpen(int connectionID, v8::Isolate *isolate) {
+  // @@@
+  v8::HandleScope handle_scope(isolate);
+  std::lock_guard<std::recursive_mutex> guard(connection_mutex);
+  WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  v8::Local<v8::String> methodName =
+      v8::String::NewFromUtf8(isolate, "_didOpen").ToLocalChecked();
+
+  v8::Persistent<v8::Object> *object = dataProviderGroup->jsObject;
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Function> method = v8::Local<v8::Function>::Cast(object->Get(isolate)->Get(context, methodName).ToLocalChecked());
+
+  v8::Local<v8::Object> localObject = v8::Local<v8::Object>::New(isolate, *object);
+  v8::Local<v8::Value> result = method->Call(context, localObject, 0, nullptr).ToLocalChecked();
+}
+
 void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
                             std::string *reason) {
   v8::HandleScope handle_scope(isolate);
@@ -870,7 +917,8 @@ void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumb
   args[0] = code;
   args[1] = reasonV8;
 
-  v8::Local<v8::Value> result = method->Call(context, context->Global(), 2, args).ToLocalChecked();
+  v8::Local<v8::Object> localObject = v8::Local<v8::Object>::New(isolate, *object);
+  v8::Local<v8::Value> result = method->Call(context, localObject, 2, args).ToLocalChecked();
 
   if (reason == nullptr) {
     delete reportedReason;
@@ -890,7 +938,8 @@ void callHasConnectionError(int connectionID, v8::Isolate *isolate) {
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Local<v8::Function> method = v8::Local<v8::Function>::Cast(object->Get(isolate)->Get(context, methodName).ToLocalChecked());
 
-  v8::Local<v8::Value> result = method->Call(context, context->Global(), 0, nullptr).ToLocalChecked();
+  v8::Local<v8::Object> localObject = v8::Local<v8::Object>::New(isolate, *object);
+  v8::Local<v8::Value> result = method->Call(context, localObject, 0, nullptr).ToLocalChecked();
 }
 
 void sendPendingDataToClient(int connectionID, v8::Isolate *isolate) {
@@ -908,19 +957,37 @@ void sendPendingDataToClient(int connectionID, v8::Isolate *isolate) {
   WebSocketsDataItem *dataItem;
   while (dataProviderGroup->incomingData.getPendingData(&dataItem)) {
 
-    v8::Local<v8::Array> dataArray = v8::Local<v8::Array>::New(isolate, v8::Array::New(isolate));
     uint8_t *buf = dataItem->GetBuf();
     size_t length = dataItem->GetLength();
 
+#ifdef SEND_AS_BINARY
+    v8::Local<v8::ArrayBuffer> dataArray =
+        v8::Local<v8::ArrayBuffer>::New(isolate, v8::ArrayBuffer::New(isolate, length));
+
     for (size_t i = 0; i < length; i++) {
-      dataArray->Set(context, v8::Number::New(isolate, 1),
+      dataArray->Set(context, v8::Number::New(isolate, i),
                  v8::Integer::New(isolate, buf[i])).Check();
     }
+#else
+    // char *dataCString = malloc(length + 1);
+    // bcopy(buf, dataCString);
+    // buf[length] '\0';
+
+    v8::Local<v8::String> dataString =
+        v8::String::NewFromUtf8(v8::Isolate::GetCurrent(), (const char *)buf,
+                                v8::NewStringType::kNormal, length)
+            .ToLocalChecked();
+#endif
 
     v8::Local<v8::Value> args[1];
+#ifdef SEND_AS_BINARY
     args[0] = dataArray;
+#else
+    args[0] = dataString;
+#endif
 
-    v8::Local<v8::Value> result = method->Call(context, context->Global(), 1, args).ToLocalChecked();
+    v8::Local<v8::Object> localObject = v8::Local<v8::Object>::New(isolate, *object);
+    v8::Local<v8::Value> result = method->Call(context, localObject, 1, args).ToLocalChecked();
   }
 }
 
@@ -940,6 +1007,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
     return -1;
   }
   if (wsi) {
+    fprintf(stderr, "Will set WSI to 0x%p\n", wsi);
     dataProviderGroup->SetWSI(wsi);
   }
 
@@ -953,24 +1021,26 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       dataProviderGroup->SetWSI(nullptr);
       break;
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
-      fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
-      break;
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
     case LWS_CALLBACK_RAW_CONNECTED:
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CONNECTED\n");
       setConnectionState(connectionID, kConnectionStateConnected);
+      dataProviderGroup->connectionDidOpen = true;
       break;
     case LWS_CALLBACK_CLOSED:
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLOSED\n");
     case LWS_CALLBACK_RAW_CLOSE:
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CLOSED\n");
       setConnectionState(connectionID, kConnectionStateClosed);
-      dataProviderGroup->didCloseConnection = true;
+      dataProviderGroup->connectionDidClose = true;
       break;
     case LWS_CALLBACK_CLIENT_RECEIVE:
     {
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_RECEIVE\n");
       WebSocketsDataItem *item = new WebSocketsDataItem((uint8_t *)in, length, true);
+      fprintf(stderr, "@@@ Mid-callback.\n");
       dataProviderGroup->incomingData.addPendingData(item);
+      fprintf(stderr, "@@@ Leaving callback.\n");
 
       break;
     }
@@ -1052,6 +1122,12 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
     case LWS_CALLBACK_PROTOCOL_INIT:
         fprintf(stderr, "Ignoring callback LWS_CALLBACK_PROTOCOL_INIT\n");
         break;
+    case LWS_CALLBACK_VHOST_CERT_AGING:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_VHOST_CERT_AGING\n");
+        break;
+    case LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH\n");
+        break;
     default:
         fprintf(stderr, "Ignoring callback %d\n", reason);
         break;
@@ -1071,12 +1147,17 @@ uint32_t connectionIDForWSI(struct lws *wsi) {
 
 #pragma mark - Data provider methods
 
+DataProvider::DataProvider(const char *name) {
+  this->name = name;
+}
+
 void DataProvider::SetWSI(struct lws *wsi) {
+  fprintf(stderr, "DataProvider: Setting WSI to 0x%p for 0x%p\n", wsi, this);
   this->wsi = wsi;
 }
 
 void DataProvider::addPendingData(WebSocketsDataItem *item) {
-  std::lock_guard<std::mutex> guard(this->mutex);
+  std::lock_guard<std::recursive_mutex> guard(this->mutex);
 
   websocketsDataItemChain_t *chainItem =
       (websocketsDataItemChain_t *)malloc(sizeof(websocketsDataItemChain_t));
@@ -1093,13 +1174,19 @@ void DataProvider::addPendingData(WebSocketsDataItem *item) {
     position->next = chainItem;
   }
 
+  fprintf(stderr, "Appended to provider %s.  Queue length now %d\n",
+          this->name, this->PendingBytes());
+
   if (this->wsi != nullptr) {
+    fprintf(stderr, "Requesting callback on writable.\n");
     lws_callback_on_writable(this->wsi);
+  } else {
+    fprintf(stderr, "Not requesting callback from 0x%p because wsi is NULL.\n", this);
   }
 }
 
 bool DataProvider::getPendingData(WebSocketsDataItem **returnItem) {
-  std::lock_guard<std::mutex> guard(this->mutex);
+  std::lock_guard<std::recursive_mutex> guard(this->mutex);
 
   websocketsDataItemChain_t *chainItem = this->firstItem;
   if (chainItem == nullptr) {
@@ -1114,7 +1201,7 @@ bool DataProvider::getPendingData(WebSocketsDataItem **returnItem) {
 }
 
 uint32_t DataProvider::PendingBytes(void) {
-  std::lock_guard<std::mutex> guard(this->mutex);
+  std::lock_guard<std::recursive_mutex> guard(this->mutex);
 
   uint32_t pendingBytes = 0;
   for (websocketsDataItemChain_t *chainItem = this->firstItem; chainItem; chainItem = chainItem->next) {
