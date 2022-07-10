@@ -63,12 +63,10 @@ class DataProvider {
     bool getPendingData(WebSocketsDataItem **returnItem);
     uint32_t PendingBytes(void);
     void SetWSI(struct lws *wsi);
-    void SetProtocols(struct lws_protocols * protocols);
   private:
     std::mutex mutex;
     websocketsDataItemChain_t *firstItem = NULL;
     struct lws *wsi = nullptr;
-    struct lws_protocols * protocols;
 };
 
 class WebSocketsContextData {
@@ -102,7 +100,6 @@ WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObjec
                                              struct lws_protocols * protocols) {
   this->jsObject = jsObject;
   this->protocols = protocols;
-  this->incomingData.SetProtocols(protocols);
 }
 
 WebSocketsContextData::~WebSocketsContextData(void) {
@@ -152,7 +149,7 @@ void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args)
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketConnectionState(const v8::FunctionCallbackInfo<v8::Value>& args);
-bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
+bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
                       uint32_t connectionID);
 struct lws_protocols *createProtocols(std::vector<std::string> protocols);
 
@@ -544,7 +541,7 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   struct lws_protocols *protocols = createProtocols(protocolStringsStdArray);
   connectionData[newConnectionIdentifier] =
       new WebSocketsContextData(persistentObject, protocols);
-  bool success = connectWebSocket(URL, protocolStringsStdArray, newConnectionIdentifier);
+  bool success = connectWebSocket(URL, protocols, newConnectionIdentifier);
 
   args.GetReturnValue().Set(newConnectionIdentifier++);
 }
@@ -1028,10 +1025,6 @@ uint32_t connectionIDForWSI(struct lws *wsi) {
 
 #pragma mark - Data provider methods
 
-void DataProvider::SetProtocols(struct lws_protocols * protocols) {
-  this->protocols = protocols;
-}
-
 void DataProvider::SetWSI(struct lws *wsi) {
   this->wsi = wsi;
 }
@@ -1055,7 +1048,7 @@ void DataProvider::addPendingData(WebSocketsDataItem *item) {
   }
 
   if (this->wsi != nullptr) {
-    lws_callback_on_writable_all_protocol(this->wsi, this->protocols);
+    lws_callback_on_writable(this->wsi);
   }
 }
 
