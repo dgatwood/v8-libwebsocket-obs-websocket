@@ -126,7 +126,13 @@ class WebSocket {
 
   close(code, reason) {
     closeWebSocket(this.internal_connection_id);
+  }
 
+  _connectionDidReceiveData(data) {
+    // @@@
+  }
+
+  _connectionDidClose(code, reason) {
     this.callHandlers(this.closeHandler,
                       this.closeEventListeners, {
       type: "close",
@@ -137,7 +143,7 @@ class WebSocket {
     });
   }
 
-  didReceiveError() {
+  _didReceiveError() {
     this.callHandlers(this.errorHandler,
                       this.errorEventListeners, {
       type: "error",

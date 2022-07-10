@@ -33,7 +33,7 @@ int main(int argc, char *argv[]) {
   }
 
 #if 1
-  v8_setup();
+  void *isolate = v8_setup();
 #if 1
   runScript(websocket_js);
   runScript(obs_websocket_js);
@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 #endif
 
   while (true) {
-    v8_runLoopCallback();
+    v8_runLoopCallback(isolate);
     usleep(1000);  // 1000 callbacks per second.
   }
 #endif

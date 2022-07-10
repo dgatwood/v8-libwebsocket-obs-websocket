@@ -69,7 +69,10 @@ class DataProvider {
 
 class WebSocketsContextData {
   public:
+    WebSocketsContextData(v8::Persistent<v8::Object> *jsObject);
     ~WebSocketsContextData(void);
+
+    v8::Persistent<v8::Object> *jsObject;
 
     DataProvider incomingData;
     DataProvider outgoingData;
@@ -81,11 +84,23 @@ class WebSocketsContextData {
     std::string *activeProtocol;
 
     int connectionState = kConnectionStateConnecting;
+    int codeNumber;
+    std::string *reason;
 };
+
+WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject) {
+  this->jsObject = jsObject;
+}
 
 WebSocketsContextData::~WebSocketsContextData(void) {
   if (this->activeProtocol) {
     delete this->activeProtocol;
+  }
+  if (this->jsObject) {
+    delete this->jsObject;
+  }
+  if (this->reason) {
+    delete this->reason;
   }
 }
 
@@ -167,7 +182,7 @@ void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
   updateScenes(newPreviewScenes, newProgramScenes);
 }
 
-void v8_setup(void) {
+void *v8_setup(void) {
   v8::V8::InitializeICUDefaultLocation("viscaptz");
   v8::V8::InitializeExternalStartupData("viscaptz");
 
@@ -229,13 +244,17 @@ void v8_setup(void) {
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
   context->Enter();
+
+  return (void *)gIsolate;
 }
 
-void callConnectionDidClose(int connectionID);
-void callHasConnectionError(int connectionID);
-void sendPendingDataToClient(int connectionID);
+void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
+                            std::string *reason);
+void callHasConnectionError(int connectionID, v8::Isolate *isolate);
+void sendPendingDataToClient(int connectionID, v8::Isolate *isolate);
 
-void v8_runLoopCallback(void) {
+void v8_runLoopCallback(void *isolateVoid) {
+  v8::Isolate *isolate = (v8::Isolate *)isolateVoid;
   std::lock_guard<std::mutex> guard(connection_mutex);
 
   std::vector<int32_t> connectionIDsToDelete;
@@ -244,16 +263,17 @@ void v8_runLoopCallback(void) {
     int32_t connectionID = element.first;
     WebSocketsContextData *connection = element.second;
     if (connection->didCloseConnection) {
-      callConnectionDidClose(connectionID);
+      callConnectionDidClose(connectionID, isolate, connection->codeNumber,
+                             connection->reason);
       connectionIDsToDelete.push_back(connectionID);
       continue;
     }
     if (connection->hasConnectionError) {
-      callHasConnectionError(connectionID);
+      callHasConnectionError(connectionID, isolate);
       continue;
     }
     if (connection->incomingData.PendingBytes() > 0) {
-      sendPendingDataToClient(connectionID);
+      sendPendingDataToClient(connectionID, isolate);
     }
   }
   for (int32_t connectionID : connectionIDsToDelete) {
@@ -480,8 +500,9 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Object *rawObject = *(args[0]->ToObject(context).ToLocalChecked());
-  // v8::Persistent<v8::Object> object = v8::Persistent<v8::Object>::New(isolate, rawObject);
+  v8::Handle<v8::Object> objectHandle = v8::Handle<v8::Object>::Cast(args[0]);
+  v8::Persistent<v8::Object> *persistentObject = new v8::Persistent<v8::Object>();
+  persistentObject->Reset(isolate, objectHandle);
 
   v8::String::Utf8Value URLV8(v8::Isolate::GetCurrent(), args[1]);
   std::string URL(*URLV8);
@@ -498,7 +519,7 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
 
   std::lock_guard<std::mutex> guard(connection_mutex);
-  connectionData[newConnectionIdentifier] = new WebSocketsContextData();
+  connectionData[newConnectionIdentifier] = new WebSocketsContextData(persistentObject);
   bool success = connectWebSocket(URL, protocolStringsStdArray, newConnectionIdentifier);
 
   args.GetReturnValue().Set(newConnectionIdentifier++);
@@ -786,16 +807,82 @@ void callConnectionError(uint32_t connectionID) {
   }
 }
 
-void callConnectionDidClose(int connectionID) {
-  // @@@
+void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
+                            std::string *reason) {
+  v8::HandleScope handle_scope(isolate);
+  std::lock_guard<std::mutex> guard(connection_mutex);
+  WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  v8::Local<v8::String> methodName =
+      v8::String::NewFromUtf8(isolate, "_connectionDidClose").ToLocalChecked();
+
+  v8::Local<v8::Integer> code =
+      v8::Local<v8::Integer>::New(isolate, v8::Integer::NewFromUnsigned(isolate, codeNumber));
+
+  std::string *reportedReason = reason ?: new std::string("Unknown");
+  v8::Local<v8::String> reasonV8 =
+      v8::String::NewFromUtf8(isolate, reportedReason->c_str()).ToLocalChecked();
+
+  v8::Persistent<v8::Object> *object = dataProviderGroup->jsObject;
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Function> method = v8::Local<v8::Function>::Cast(object->Get(isolate)->Get(context, methodName).ToLocalChecked());
+
+  v8::Local<v8::Value> args[2];
+  args[0] = code;
+  args[1] = reasonV8;
+
+  v8::Local<v8::Value> result = method->Call(context, context->Global(), 2, args).ToLocalChecked();
+
+  if (reason == nullptr) {
+    delete reportedReason;
+  }
 }
 
-void callHasConnectionError(int connectionID) {
+void callHasConnectionError(int connectionID, v8::Isolate *isolate) {
   // @@@
+  v8::HandleScope handle_scope(isolate);
+  std::lock_guard<std::mutex> guard(connection_mutex);
+  WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  v8::Local<v8::String> methodName =
+      v8::String::NewFromUtf8(isolate, "_didReceiveError").ToLocalChecked();
+
+  v8::Persistent<v8::Object> *object = dataProviderGroup->jsObject;
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Function> method = v8::Local<v8::Function>::Cast(object->Get(isolate)->Get(context, methodName).ToLocalChecked());
+
+  v8::Local<v8::Value> result = method->Call(context, context->Global(), 0, nullptr).ToLocalChecked();
 }
 
-void sendPendingDataToClient(int connectionID) {
-  // @@@
+void sendPendingDataToClient(int connectionID, v8::Isolate *isolate) {
+  v8::HandleScope handle_scope(isolate);
+  std::lock_guard<std::mutex> guard(connection_mutex);
+  WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  v8::Local<v8::String> methodName =
+      v8::String::NewFromUtf8(isolate, "_connectionDidReceiveData").ToLocalChecked();
+
+  v8::Persistent<v8::Object> *object = dataProviderGroup->jsObject;
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Function> method = v8::Local<v8::Function>::Cast(object->Get(isolate)->Get(context, methodName).ToLocalChecked());
+
+  WebSocketsDataItem *dataItem;
+  while (dataProviderGroup->incomingData.getPendingData(&dataItem)) {
+
+    v8::Local<v8::Array> dataArray = v8::Local<v8::Array>::New(isolate, v8::Array::New(isolate));
+    uint8_t *buf = dataItem->GetBuf();
+    size_t length = dataItem->GetLength();
+
+    for (size_t i = 0; i < length; i++) {
+      dataArray->Set(context, v8::Number::New(isolate, 1),
+                 v8::Integer::New(isolate, buf[i])).Check();
+    }
+
+    v8::Local<v8::Value> args[1];
+    args[0] = dataArray;
+
+    v8::Local<v8::Value> result = method->Call(context, context->Global(), 1, args).ToLocalChecked();
+  }
 }
 
 

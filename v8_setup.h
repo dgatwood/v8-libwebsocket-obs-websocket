@@ -3,10 +3,10 @@
 extern "C" {
 #endif
 
-void v8_setup(void);
+void *v8_setup(void);  // Returns isolate cast to void pointer.
 void runScript(char *scriptString);
 bool runScriptAsModule(char *moduleName, char *scriptString);
-void v8_runLoopCallback(void);
+void v8_runLoopCallback(void *isolate);
 void v8_teardown(void);
 
 #ifdef __cplusplus
