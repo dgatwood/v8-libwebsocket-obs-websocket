@@ -927,8 +927,6 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
 
-  dataProviderGroup->SetWSI(wsi);
-
   if (dataProviderGroup == nullptr) {
     fprintf(stderr, "Closing connection because data provider group is NULL.\n");
     return -1;
@@ -939,11 +937,21 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
   }
 
   switch (reason) {
+    case LWS_CALLBACK_WSI_CREATE:
+      dataProviderGroup->SetWSI(wsi);
+      break;
+    case LWS_CALLBACK_WSI_DESTROY:
+      dataProviderGroup->SetWSI(nullptr);
+      break;
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
+      fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
+      break;
+    case LWS_CALLBACK_RAW_CONNECTED:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CONNECTED\n");
       setConnectionState(connectionID, kConnectionStateConnected);
       break;
     case LWS_CALLBACK_CLOSED:
+    case LWS_CALLBACK_RAW_CLOSE:
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLOSED\n");
       setConnectionState(connectionID, kConnectionStateClosed);
       dataProviderGroup->didCloseConnection = true;
@@ -962,6 +970,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       setConnectionState(connectionID, kConnectionStateClosed);
       break;
     case LWS_CALLBACK_CLIENT_WRITEABLE:
+    case LWS_CALLBACK_RAW_WRITEABLE:
     {
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_WRITEABLE\n");
       WebSocketsDataItem *item = NULL;
@@ -1012,18 +1021,36 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
 
     // Ignore all of these.
     case LWS_CALLBACK_CONNECTING:  // 105
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CONNECTING\n");
+        break;
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP\n");
+        break;
     case LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ\n");
+        break;
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER\n");
+        break;
     case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_HTTP_WRITEABLE\n");
+        break;
     case LWS_CALLBACK_COMPLETED_CLIENT_HTTP:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_COMPLETED_CLIENT_HTTP\n");
+        break;
+    case LWS_CALLBACK_PROTOCOL_INIT:
+        fprintf(stderr, "Ignoring callback LWS_CALLBACK_PROTOCOL_INIT\n");
+        break;
     default:
         fprintf(stderr, "Ignoring callback %d\n", reason);
         break;
   }
   return 0;
 }
-// LWS_CALLBACK_PROTOCOL_INIT 27
+// Ignoring callback 31 LWS_CALLBACK_GET_THREAD_ID 
+// Ignoring callback 71 LWS_CALLBACK_EVENT_WAIT_CANCELLED
+// Ignoring callback 61
+// Ignoring callback 72 LWS_CALLBACK_VHOST_CERT_AGING
 
 uint32_t connectionIDForWSI(struct lws *wsi) {
   struct lws_context *context = lws_get_context(wsi);
