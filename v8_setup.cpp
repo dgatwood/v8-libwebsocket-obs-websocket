@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <stdio.h>
+#include <sys/param.h>
 #include <v8.h>
 
 // Might work on Linux.  Doesn't work in macOS.
@@ -277,6 +278,9 @@ void v8_runLoopCallback(void *isolateVoid) {
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
 
   std::vector<int32_t> connectionIDsToDelete;
+
+  int contextWaitTime = MAX(500 / connectionData.size(), 1);
+
   for (std::pair<int32_t, WebSocketsContextData *> element :
        connectionData) {
     int32_t connectionID = element.first;
@@ -291,6 +295,10 @@ void v8_runLoopCallback(void *isolateVoid) {
       callHasConnectionError(connectionID, isolate);
       continue;
     }
+
+    struct lws_context *context = lws_get_context(connection->wsi);
+    lws_service(context, contextWaitTime);
+
     if (connection->incomingData.PendingBytes() > 0) {
       sendPendingDataToClient(connectionID, isolate);
     }
@@ -1103,25 +1111,13 @@ WebSocketsDataItem::~WebSocketsDataItem(void) {
   free(this->rawBuf);
 }
 
-// In main loop:
-// if (hasConnectionError) { call didReceiveError() on object. }
 
-// WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
-// if (dataProviderGroup != nullptr && dataProviderGroup->incomingData.PendingBytes()
-
-// if (hasConnectionError) { call didReceiveError() on object. }
-
-
-// PROBLEMS:
+// Future issues:
 //
-// 1.  Need to call                                 lws_callback_on_writable_all_protocol(context,
-//                                            &protocols[PROTOCOL_DUMB_INCREMENT]);
+// 1.  Ideally, we should run LWS code in a different thread per context so that
+//     the waits don't have to be so short.  This also involves figuring out how to
+//     dispatch new connection requests to that thread from the JS thread so that
+//     everything works.
 //
-// for each connection.
-//
-// 2.  Need to call                 lws_service(context, 500);
-//
-// 3.  Need to run LWS code in a different thread so that it won't interfere with the V8 threading model.
-//
-// 4.  Need to figure out how to dispatch new connection requests to that thread from the JS thread
-//     so that everything works.
+// 2.  Ideally, for a more generally useful integration, we should probably have
+//     support for setTimeout() and setInteval().
