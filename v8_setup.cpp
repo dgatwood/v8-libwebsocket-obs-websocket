@@ -21,6 +21,8 @@
 
 extern char *password;
 
+std::mutex connection_mutex;
+
 // States:
 // 0 = Connecting
 // 1 = Connected
@@ -67,15 +69,25 @@ class DataProvider {
 
 class WebSocketsContextData {
   public:
+    ~WebSocketsContextData(void);
+
     DataProvider incomingData;
     DataProvider outgoingData;
 
     bool isBinary;
     bool shouldCloseConnection;
+    bool didCloseConnection;
     bool hasConnectionError;
+    std::string *activeProtocol;
 
     int connectionState = kConnectionStateConnecting;
 };
+
+WebSocketsContextData::~WebSocketsContextData(void) {
+  if (this->activeProtocol) {
+    delete this->activeProtocol;
+  }
+}
 
 void setConnectionState(uint32_t connectionID, int state);
 
@@ -96,6 +108,7 @@ v8::MaybeLocal<v8::Module> resolveCallback(v8::Local<v8::Context> context,
                                            v8::Local<v8::FixedArray> import_assertions,
                                            v8::Local<v8::Module> referrer);
 
+void logMessage(const v8::FunctionCallbackInfo<v8::Value>& args);
 void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args);
 void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -189,6 +202,9 @@ void v8_setup(void) {
   globals->Set(v8::String::NewFromUtf8(gIsolate, "setProgramAndPreviewScenes").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, setProgramAndPreviewScenes));
 
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "logMessage").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, logMessage));
+
   globals->Set(v8::String::NewFromUtf8(gIsolate, "connectWebSocket").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, connectWebSocket));
 
@@ -213,6 +229,36 @@ void v8_setup(void) {
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
   context->Enter();
+}
+
+void callConnectionDidClose(int connectionID);
+void callHasConnectionError(int connectionID);
+void sendPendingDataToClient(int connectionID);
+
+void v8_runLoopCallback(void) {
+  std::lock_guard<std::mutex> guard(connection_mutex);
+
+  std::vector<int32_t> connectionIDsToDelete;
+  for (std::pair<int32_t, WebSocketsContextData *> element :
+       connectionData) {
+    int32_t connectionID = element.first;
+    WebSocketsContextData *connection = element.second;
+    if (connection->didCloseConnection) {
+      callConnectionDidClose(connectionID);
+      connectionIDsToDelete.push_back(connectionID);
+      continue;
+    }
+    if (connection->hasConnectionError) {
+      callHasConnectionError(connectionID);
+      continue;
+    }
+    if (connection->incomingData.PendingBytes() > 0) {
+      sendPendingDataToClient(connectionID);
+    }
+  }
+  for (int32_t connectionID : connectionIDsToDelete) {
+    connectionData.erase(connectionID);
+  }
 }
 
 void runScript(char *scriptString) {
@@ -428,7 +474,7 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::Isolate *isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
-  static uint32_t connectionIdentifier = 0;
+  static uint32_t newConnectionIdentifier = 0;
 
   fprintf(stderr, "connectWebSocket called.\n");
 
@@ -451,20 +497,20 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
     protocolStringsStdArray.push_back(protocolString);
   }
 
-  bool success = connectWebSocket(URL, protocolStringsStdArray, connectionIdentifier);
+  std::lock_guard<std::mutex> guard(connection_mutex);
+  connectionData[newConnectionIdentifier] = new WebSocketsContextData();
+  bool success = connectWebSocket(URL, protocolStringsStdArray, newConnectionIdentifier);
 
-  if (success) {
-    args.GetReturnValue().Set(connectionIdentifier++);
-    connectionData[connectionIdentifier] = new WebSocketsContextData();
-  } else {
-    args.GetReturnValue().Set(-1);
-  }
+  args.GetReturnValue().Set(newConnectionIdentifier++);
 }
 
 bool sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8);
 
 // sendWebSocketData(this.internal_connection_id, data);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
+
+fprintf(stderr, "Called sendWebSocketData\n");
+
   v8::Isolate *isolate = args.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
   v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
@@ -504,6 +550,7 @@ void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
   setConnectionState(connectionID, kConnectionStateClosing);
 
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
   if (dataProviderGroup != nullptr) {
     dataProviderGroup->shouldCloseConnection = true;
@@ -517,6 +564,7 @@ void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args)
   v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
   uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
   uint32_t bufferCount = 0;
 
@@ -566,6 +614,18 @@ void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
   exit(1);
 }
 
+void getWebSocketActiveProtocol(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
+  uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
+  std::lock_guard<std::mutex> guard(connection_mutex);
+  WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  args.GetReturnValue().Set(v8::String::NewFromUtf8(isolate,
+      dataProviderGroup->activeProtocol->c_str()).ToLocalChecked());
+}
+
 // Makes a permanent copy of a C++ string using malloc.
 char *mallocString(std::string string) {
   char *buf = NULL;
@@ -573,8 +633,8 @@ char *mallocString(std::string string) {
   return buf;
 }
 
-static const struct lws_extension exts[] = {
 #ifdef SUPPORT_DEFLATE
+static const struct lws_extension supportedExtensions[] = {
 	{
 		"permessage-deflate",
 		lws_extension_callback_pm_deflate,
@@ -585,9 +645,9 @@ static const struct lws_extension exts[] = {
 		lws_extension_callback_pm_deflate,
 		"deflate_frame"
 	},
-#endif
 	{ NULL, NULL, NULL /* terminator */ }
 };
+#endif
 
 int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
 
@@ -596,6 +656,7 @@ struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
   struct lws_protocols *data = (struct lws_protocols *)malloc(sizeof(struct lws_protocols) * (count + 1));
 
   for (size_t i = 0; i < count; i++) {
+    fprintf(stderr, "Protocol %zu: %s\n", i, protocols[i].c_str());
     data[i].name = mallocString(protocols[i]);
     data[i].callback = websocketLWSCallback;
     data[i].per_session_data_size = 0;
@@ -618,9 +679,15 @@ bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
 
   info.protocols = createProtocols(protocols);
 
+  uint32_t *connectionIDRef = (uint32_t *)malloc(sizeof(uint32_t));
+  *connectionIDRef = connectionID;
+
+  info.user = connectionIDRef;
   info.uid = -1;
   info.gid = -1;
-  info.extensions = exts;
+#ifdef SUPPORT_DEFLATE
+  info.extensions = supportedExtensions;
+#endif
   info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
   info.options |= LWS_SERVER_OPTION_H2_JUST_FIX_WINDOW_UPDATE_OVERFLOW;
 
@@ -629,10 +696,7 @@ bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
   struct lws_client_connect_info connectInfo;
   bzero(&connectInfo, sizeof(connectInfo));
 
-  uint32_t *connectionIDRef = (uint32_t *)malloc(sizeof(uint32_t));
-  *connectionIDRef = connectionID;
-  connectInfo.userdata = (void *)connectionIDRef;
-  
+  connectInfo.opaque_user_data = (void *)connectionIDRef;
 
   const char *URLProtocol = NULL, *URLPath = NULL;
   char *tempURL = mallocString(URL);
@@ -665,12 +729,16 @@ bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
   connectInfo.protocol = mallocString(protocols[0]);
 
   lws_client_connect_via_info(&connectInfo);
+
+// lws_set_opaque_user_data
+
   free(tempURL);
 
   return true;
 }
 
 bool sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bool isUTF8) {
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
 
   WebSocketsDataItem *item = new WebSocketsDataItem(data, length, !isUTF8);
@@ -683,6 +751,7 @@ bool sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bo
 }
 
 void setConnectionState(uint32_t connectionID, int state) {
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
   dataProviderGroup->connectionState = state;
 }
@@ -693,6 +762,7 @@ void getWebSocketConnectionState(const v8::FunctionCallbackInfo<v8::Value>& args
   v8::Handle<v8::Uint32> connectionIDV8 = v8::Handle<v8::Uint32>::Cast(args[0]);
   uint32_t connectionID = connectionIDV8->Uint32Value(context).ToChecked();
 
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
   if (dataProviderGroup == nullptr) {
     args.GetReturnValue().Set(kConnectionStateClosed);
@@ -701,19 +771,45 @@ void getWebSocketConnectionState(const v8::FunctionCallbackInfo<v8::Value>& args
   }
 }
 
+void logMessage(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::String::Utf8Value messageV8(v8::Isolate::GetCurrent(), args[0]);
+  std::string messageString(*messageV8);
+  fprintf(stderr, "%s\n", messageString.c_str());
+}
+
 void callConnectionError(uint32_t connectionID) {
   // Call didReceiveError on object.
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
   if (dataProviderGroup != nullptr) {
     dataProviderGroup->hasConnectionError = true;
   }
 }
 
+void callConnectionDidClose(int connectionID) {
+  // @@@
+}
+
+void callHasConnectionError(int connectionID) {
+  // @@@
+}
+
+void sendPendingDataToClient(int connectionID) {
+  // @@@
+}
+
+
 int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t length) {
   uint32_t connectionID = connectionIDForWSI(wsi);
 
+  std::lock_guard<std::mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+  if (dataProviderGroup == nullptr) {
+    fprintf(stderr, "Closing connection because data provider group is NULL.\n");
+    return -1;
+  }
   if (dataProviderGroup == nullptr || dataProviderGroup->shouldCloseConnection) {
+    fprintf(stderr, "Closing connection because of client request.\n");
     return -1;
   }
 
@@ -723,6 +819,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       break;
     case LWS_CALLBACK_CLOSED:
       setConnectionState(connectionID, kConnectionStateClosed);
+      dataProviderGroup->didCloseConnection = true;
       break;
     case LWS_CALLBACK_CLIENT_RECEIVE:
     {
@@ -743,6 +840,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
                                 item->GetLength(),
                                 item->IsBinary() ? LWS_WRITE_BINARY : LWS_WRITE_TEXT);
           if (bytesWritten < 0) {
+            fprintf(stderr, "Closing connection because of write failure.\n");
             return -1;
           } else if (bytesWritten < item->GetLength()) {
             lwsl_err("Partial write LWS_CALLBACK_CLIENT_WRITEABLE\n");
@@ -755,31 +853,45 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       if ((strcmp((const char *)in, "deflate-stream") == 0) &&
         deny_deflate) {
           lwsl_notice("denied deflate-stream extension\n");
+          fprintf(stderr, "Extension deflate-stream detected.  Returning 1.\n");
           return 1;
       }
       if ((strcmp((const char *)in, "x-webkit-deflate-frame") == 0)) {
+        fprintf(stderr, "Extension x-webkit-deflate-frame detected.  Returning 1.\n");
         return 1;
       }
       if ((strcmp((const char *)in, "deflate-frame") == 0)) {
+        fprintf(stderr, "Extension deflate-frame detected.  Returning 1.\n");
         return 1;
       }
 #endif
       return 0;
+
+    case LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL:
+    {
+      const struct lws_protocols *protocol = lws_get_protocol(wsi);
+      dataProviderGroup->activeProtocol = new std::string(protocol->name);
+      break;
+    }
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
       // If certs don't verify on their own, let them fail.
+      fprintf(stderr, "Ignoring SSL callback.\n");
       return 0;
 
     // Ignore all of these.
+    case LWS_CALLBACK_CONNECTING:
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
     case LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ:
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER:
     case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
     case LWS_CALLBACK_COMPLETED_CLIENT_HTTP:
     default:
+        fprintf(stderr, "Ignoring callback %d\n", reason);
         break;
   }
   return 0;
 }
+// LWS_CALLBACK_PROTOCOL_INIT 27
 
 uint32_t connectionIDForWSI(struct lws *wsi) {
   struct lws_context *context = lws_get_context(wsi);

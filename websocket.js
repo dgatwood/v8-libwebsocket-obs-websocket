@@ -1,6 +1,13 @@
 
+class console {
+  log(message) {
+    logMessage(message);
+  }
+}
+
 class WebSocket {
   constructor(url, protocols) {
+    logMessage("Constructor called.\n");
     if (typeof(protocols)==='string') {
       this.construct(url, [protocols]);
     } else {
@@ -14,6 +21,7 @@ class WebSocket {
   STATE_CLOSED = 3;
 
   construct(url, protocols) {
+    logMessage("Secondary constructor called.\n");
     Object.defineProperty(this, "url", {
       value: url,
       writable: false,
@@ -23,6 +31,7 @@ class WebSocket {
 
     const internal_connection_id =
         connectWebSocket(this, url, protocols);
+
     Object.defineProperty(this, "internal_connection_id", {
       value: internal_connection_id,
       writable: false,
@@ -172,10 +181,14 @@ class WebSocket {
   }
 
   get bufferedAmount() {
-    return getWebSocketBufferedAmount();
+    return getWebSocketBufferedAmount(this.internal_connection_id);
   }
 
   get extensions() {
-    return getWebSocketExtensions();
+    return getWebSocketExtensions(this.internal_connection_id);
+  }
+
+  get protocol() {
+    return getWebSocketActiveProtocol(this.internal_connection_id);
   }
 }

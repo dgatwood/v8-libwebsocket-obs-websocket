@@ -24,6 +24,10 @@ bin/translatejstocstring: translatejstocstring.c
 	make makebin;
 	cc translatejstocstring.c -o bin/translatejstocstring
 
+bin/websocket.h: websocket.js bin/translatejstocstring
+	make makebin;
+	cat websocket.js | bin/translatejstocstring websocket_js > bin/websocket.h
+
 bin/obs-websocket.h: obs-websocket.js bin/translatejstocstring
 	make makebin;
 	cat obs-websocket.js | bin/translatejstocstring obs_websocket_js > bin/obs-websocket.h
@@ -32,7 +36,7 @@ bin/gettally.h: gettally.js bin/translatejstocstring
 	make makebin;
 	cat gettally.js | bin/translatejstocstring gettally_js > bin/gettally.h
 
-bin/gettally.o: gettally.c bin/obs-websocket.h bin/gettally.h bin/websocket_all_js.h # bin/nextTick.h bin/buffer.h
+bin/gettally.o: gettally.c bin/obs-websocket.h bin/gettally.h bin/websocket.h # bin/websocket_all_js.h # bin/nextTick.h bin/buffer.h
 	make makebin;
 	cc -c ${CFLAGS} gettally.c -o bin/gettally.o
 
