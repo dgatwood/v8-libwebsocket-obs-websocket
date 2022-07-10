@@ -296,8 +296,12 @@ void v8_runLoopCallback(void *isolateVoid) {
       continue;
     }
 
-    struct lws_context *context = lws_get_context(connection->wsi);
-    lws_service(context, contextWaitTime);
+    if (connection->wsi != nullptr) {
+      struct lws_context *context = lws_get_context(connection->wsi);
+      lws_service(context, contextWaitTime);
+    } else {
+      fprintf(stderr, "Connection %d ignored because wsi is NULL\n", connectionID);
+    }
 
     if (connection->incomingData.PendingBytes() > 0) {
       sendPendingDataToClient(connectionID, isolate);
@@ -935,12 +939,17 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
     fprintf(stderr, "Closing connection because of client request.\n");
     return -1;
   }
+  if (wsi) {
+    dataProviderGroup->SetWSI(wsi);
+  }
 
   switch (reason) {
     case LWS_CALLBACK_WSI_CREATE:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_WSI_CREATE\n");
       dataProviderGroup->SetWSI(wsi);
       break;
     case LWS_CALLBACK_WSI_DESTROY:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_WSI_DESTROY\n");
       dataProviderGroup->SetWSI(nullptr);
       break;
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
@@ -951,8 +960,9 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       setConnectionState(connectionID, kConnectionStateConnected);
       break;
     case LWS_CALLBACK_CLOSED:
-    case LWS_CALLBACK_RAW_CLOSE:
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLOSED\n");
+    case LWS_CALLBACK_RAW_CLOSE:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CLOSED\n");
       setConnectionState(connectionID, kConnectionStateClosed);
       dataProviderGroup->didCloseConnection = true;
       break;
@@ -969,8 +979,9 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       callConnectionError(connectionID);
       setConnectionState(connectionID, kConnectionStateClosed);
       break;
-    case LWS_CALLBACK_CLIENT_WRITEABLE:
     case LWS_CALLBACK_RAW_WRITEABLE:
+      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_WRITEABLE\n");
+    case LWS_CALLBACK_CLIENT_WRITEABLE:
     {
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_WRITEABLE\n");
       WebSocketsDataItem *item = NULL;

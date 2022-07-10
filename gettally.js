@@ -16,7 +16,7 @@ function connectOBS() {
     console.log('SwitchScenes', data);
   });
 
-  obs.connect('ws://192.168.1.63:4455', obsPassword, {
+  obs.connect('ws://127.0.0.1:4455', obsPassword, {
     eventSubscriptions: (1 << 2),  /* EventSubcription.Scenes - no idea why the constant won't load. */
     rpcVersion: 1
   }).then((value) => {
