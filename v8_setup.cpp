@@ -62,14 +62,19 @@ class DataProvider {
     void addPendingData(WebSocketsDataItem *item);
     bool getPendingData(WebSocketsDataItem **returnItem);
     uint32_t PendingBytes(void);
+    void SetWSI(struct lws *wsi);
+    void SetProtocols(struct lws_protocols * protocols);
   private:
     std::mutex mutex;
     websocketsDataItemChain_t *firstItem = NULL;
+    struct lws *wsi = nullptr;
+    struct lws_protocols * protocols;
 };
 
 class WebSocketsContextData {
   public:
-    WebSocketsContextData(v8::Persistent<v8::Object> *jsObject);
+    WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
+                          struct lws_protocols * protocols);
     ~WebSocketsContextData(void);
 
     v8::Persistent<v8::Object> *jsObject = nullptr;
@@ -81,20 +86,28 @@ class WebSocketsContextData {
     bool shouldCloseConnection = false;
     bool didCloseConnection = false;
     bool hasConnectionError = false;
-    std::string *activeProtocol = nullptr;
+
+    std::string *activeProtocolName = nullptr;
+    const struct lws_protocols *protocols;
 
     int connectionState = kConnectionStateConnecting;
     int codeNumber = 0;
     std::string *reason = nullptr;
+
+    void SetWSI(struct lws *wsi);
+    struct lws *wsi = nullptr;
 };
 
-WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject) {
+WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
+                                             struct lws_protocols * protocols) {
   this->jsObject = jsObject;
+  this->protocols = protocols;
+  this->incomingData.SetProtocols(protocols);
 }
 
 WebSocketsContextData::~WebSocketsContextData(void) {
-  if (this->activeProtocol) {
-    delete this->activeProtocol;
+  if (this->activeProtocolName) {
+    delete this->activeProtocolName;
   }
   if (this->jsObject) {
     delete this->jsObject;
@@ -102,6 +115,14 @@ WebSocketsContextData::~WebSocketsContextData(void) {
   if (this->reason) {
     delete this->reason;
   }
+  if (this->protocols) {
+    free((void *)this->protocols);
+  }
+}
+
+void WebSocketsContextData::SetWSI(struct lws *wsi) {
+  this->wsi = wsi;
+  this->incomingData.SetWSI(wsi);
 }
 
 void setConnectionState(uint32_t connectionID, int state);
@@ -133,6 +154,7 @@ void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketConnectionState(const v8::FunctionCallbackInfo<v8::Value>& args);
 bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
                       uint32_t connectionID);
+struct lws_protocols *createProtocols(std::vector<std::string> protocols);
 
 uint32_t connectionIDForWSI(struct lws *wsi);
 
@@ -519,7 +541,9 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   }
 
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
-  connectionData[newConnectionIdentifier] = new WebSocketsContextData(persistentObject);
+  struct lws_protocols *protocols = createProtocols(protocolStringsStdArray);
+  connectionData[newConnectionIdentifier] =
+      new WebSocketsContextData(persistentObject, protocols);
   bool success = connectWebSocket(URL, protocolStringsStdArray, newConnectionIdentifier);
 
   args.GetReturnValue().Set(newConnectionIdentifier++);
@@ -646,7 +670,7 @@ void getWebSocketActiveProtocol(const v8::FunctionCallbackInfo<v8::Value>& args)
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
 
   args.GetReturnValue().Set(v8::String::NewFromUtf8(isolate,
-      dataProviderGroup->activeProtocol->c_str()).ToLocalChecked());
+      dataProviderGroup->activeProtocolName->c_str()).ToLocalChecked());
 }
 
 // Makes a permanent copy of a C++ string using malloc.
@@ -694,13 +718,13 @@ struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
   return data;
 };
 
-bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
+bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
                                                 uint32_t connectionID) {
   struct lws_context_creation_info info;
 
   bzero(&info, sizeof(info));
 
-  info.protocols = createProtocols(protocols);
+  info.protocols = protocols;
 
   uint32_t *connectionIDRef = (uint32_t *)malloc(sizeof(uint32_t));
   *connectionIDRef = connectionID;
@@ -753,7 +777,7 @@ bool connectWebSocket(std::string URL, std::vector<std::string> protocols,
   // connectInfo.method = "RAW";
 
   connectInfo.method = "RAW";
-  connectInfo.protocol = mallocString(protocols[0]);
+  // connectInfo.protocol = mallocString(protocols[0]);
 
   lws_client_connect_via_info(&connectInfo);
 
@@ -897,6 +921,9 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
 
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
+
+  dataProviderGroup->SetWSI(wsi);
+
   if (dataProviderGroup == nullptr) {
     fprintf(stderr, "Closing connection because data provider group is NULL.\n");
     return -1;
@@ -970,7 +997,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
     {
       fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL\n");
       const struct lws_protocols *protocol = lws_get_protocol(wsi);
-      dataProviderGroup->activeProtocol = new std::string(protocol->name);
+      dataProviderGroup->activeProtocolName = new std::string(protocol->name);
       break;
     }
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
@@ -1001,6 +1028,14 @@ uint32_t connectionIDForWSI(struct lws *wsi) {
 
 #pragma mark - Data provider methods
 
+void DataProvider::SetProtocols(struct lws_protocols * protocols) {
+  this->protocols = protocols;
+}
+
+void DataProvider::SetWSI(struct lws *wsi) {
+  this->wsi = wsi;
+}
+
 void DataProvider::addPendingData(WebSocketsDataItem *item) {
   std::lock_guard<std::mutex> guard(this->mutex);
 
@@ -1017,6 +1052,10 @@ void DataProvider::addPendingData(WebSocketsDataItem *item) {
       position = position->next;
     }
     position->next = chainItem;
+  }
+
+  if (this->wsi != nullptr) {
+    lws_callback_on_writable_all_protocol(this->wsi, this->protocols);
   }
 }
 
