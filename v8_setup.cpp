@@ -11,6 +11,16 @@
 // Might work on Linux.  Doesn't work in macOS.
 #undef SUPPORT_DEFLATE
 
+#if 1
+#define CBDEBUG(args...) fprintf(stderr, args)
+#define FUNCDEBUG(args...) fprintf(stderr, args)
+#define WSIDEBUG(args...) fprintf(stderr, args)
+#else
+#define CBDEBUG(args...)
+#define FUNCDEBUG(args...)
+#define WSIDEBUG(args...)
+#endif
+
 // Can't figure out how to determine when this is needed, and lots
 // of websockets code expects strings, so....
 #undef SEND_AS_BINARY
@@ -132,7 +142,7 @@ WebSocketsContextData::~WebSocketsContextData(void) {
 }
 
 void WebSocketsContextData::SetWSI(struct lws *wsi) {
-  fprintf(stderr, "Top level: Setting WSI to 0x%p\n", wsi);
+  WSIDEBUG("Top level: Setting WSI to 0x%p\n", wsi);
   this->wsi = wsi;
   this->outgoingData.SetWSI(wsi);
 }
@@ -164,6 +174,7 @@ void getWebSocketBufferedAmount(const v8::FunctionCallbackInfo<v8::Value>& args)
 void getWebSocketExtensions(const v8::FunctionCallbackInfo<v8::Value>& args);
 void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args);
 void getWebSocketConnectionState(const v8::FunctionCallbackInfo<v8::Value>& args);
+void getWebSocketActiveProtocol(const v8::FunctionCallbackInfo<v8::Value>& args);
 bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
                       uint32_t connectionID);
 struct lws_protocols *createProtocols(std::vector<std::string> protocols);
@@ -181,7 +192,7 @@ void setProgramAndPreviewScenes(const v8::FunctionCallbackInfo<v8::Value>& args)
   v8::Isolate *isolate = args.GetIsolate();
   v8::HandleScope scope(isolate);
 
-  fprintf(stderr, "setProgramAndPreviewScenes called.\n");
+  FUNCDEBUG("setProgramAndPreviewScenes called.\n");
 
   if(args.Length() != 2 || !args[0]->IsArray() || !args[1]->IsArray()) {
     isolate->ThrowException(v8::Exception::TypeError(
@@ -275,6 +286,9 @@ void *v8_setup(void) {
   globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketConnectionState").ToLocalChecked(),
                v8::FunctionTemplate::New(gIsolate, getWebSocketConnectionState));
 
+  globals->Set(v8::String::NewFromUtf8(gIsolate, "getWebSocketActiveProtocol").ToLocalChecked(),
+               v8::FunctionTemplate::New(gIsolate, getWebSocketActiveProtocol));
+
   // Create a new context.
   v8::Local<v8::Context> context = v8::Context::New(gIsolate, nullptr, globals);
   context->Enter();
@@ -303,23 +317,6 @@ void v8_runLoopCallback(void *isolateVoid) {
        connectionData) {
     int32_t connectionID = element.first;
     WebSocketsContextData *connection = element.second;
-    if (connection->connectionDidClose) {
-      connection->connectionDidClose = false;
-      callConnectionDidClose(connectionID, isolate, connection->codeNumber,
-                             connection->reason);
-      connectionIDsToDelete.push_back(connectionID);
-      continue;
-    }
-    if (connection->connectionDidOpen) {
-      connection->connectionDidOpen = false;
-      callConnectionDidOpen(connectionID, isolate);
-      continue;
-    }
-    if (connection->hasConnectionError) {
-      connection->hasConnectionError = false;
-      callHasConnectionError(connectionID, isolate);
-      continue;
-    }
 
     if (connection->wsi != nullptr) {
       struct lws_context *context = lws_get_context(connection->wsi);
@@ -330,10 +327,26 @@ fprintf(stderr, "Done waiting for events\n");
       fprintf(stderr, "Connection %d ignored because wsi is NULL\n", connectionID);
     }
 
+    if (connection->connectionDidOpen) {
+      connection->connectionDidOpen = false;
+      callConnectionDidOpen(connectionID, isolate);
+    }
+
     if (connection->incomingData.PendingBytes() > 0) {
       fprintf(stderr, "@@@ Sending data to client.\n");
       sendPendingDataToClient(connectionID, isolate);
       fprintf(stderr, "@@@ Done.\n");
+    }
+
+    if (connection->hasConnectionError) {
+      connection->hasConnectionError = false;
+      callHasConnectionError(connectionID, isolate);
+    }
+    if (connection->connectionDidClose) {
+      connection->connectionDidClose = false;
+      callConnectionDidClose(connectionID, isolate, connection->codeNumber,
+                             connection->reason);
+      connectionIDsToDelete.push_back(connectionID);
     }
   }
   for (int32_t connectionID : connectionIDsToDelete) {
@@ -460,7 +473,7 @@ void v8_teardown(void) {
 void PasswordGetter(v8::Local<v8::String> property,
               const v8::PropertyCallbackInfo<v8::Value>& info) {
   v8::Isolate *isolate = v8::Isolate::GetCurrent();
-  fprintf(stderr, "PasswordGetter called.\n");
+  FUNCDEBUG("PasswordGetter called.\n");
   
   v8::HandleScope handle_scope(isolate);
   v8::Local<v8::String> passwordV8String =
@@ -556,7 +569,7 @@ void connectWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
   v8::HandleScope scope(isolate);
   static uint32_t newConnectionIdentifier = 0;
 
-  fprintf(stderr, "connectWebSocket called.\n");
+  FUNCDEBUG("connectWebSocket called.\n");
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
@@ -592,7 +605,7 @@ bool sendWebSocketData(uint32_t connectionID, uint8_t *data, uint64_t length, bo
 // sendWebSocketData(this.internal_connection_id, data);
 void sendWebSocketData(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
-fprintf(stderr, "Called sendWebSocketData\n");
+  FUNCDEBUG("Called sendWebSocketData\n");
 
   v8::Isolate *isolate = args.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -626,7 +639,7 @@ fprintf(stderr, "Called sendWebSocketData\n");
 
 // closeWebSocket(this.internal_connection_id);
 void closeWebSocket(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  fprintf(stderr, "@@@ called closeWebSocket\n");
+  FUNCDEBUG("@@@ called closeWebSocket\n");
 
   v8::Isolate *isolate = args.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
@@ -695,7 +708,7 @@ void setWebSocketBinaryType(const v8::FunctionCallbackInfo<v8::Value>& args) {
   // string binaryTypeString
 
   // @@@
-  fprintf(stderr, "Got setWebSocketBinaryType (unsupported)\n");
+  FUNCDEBUG("Got setWebSocketBinaryType (unsupported)\n");
   exit(1);
 }
 
@@ -707,8 +720,16 @@ void getWebSocketActiveProtocol(const v8::FunctionCallbackInfo<v8::Value>& args)
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
 
-  args.GetReturnValue().Set(v8::String::NewFromUtf8(isolate,
-      dataProviderGroup->activeProtocolName->c_str()).ToLocalChecked());
+  bool isValid = (dataProviderGroup->activeProtocolName != NULL);
+  if (isValid) {
+    fprintf(stderr, "In getWebSocketActiveProtocol: protocol is %s\n",
+            dataProviderGroup->activeProtocolName->c_str());
+  } else {
+    fprintf(stderr, "In getWebSocketActiveProtocol: protocol is NULL!!!\n");
+  }
+
+  args.GetReturnValue().Set(v8::String::NewFromUtf8(isolate, isValid ?
+      dataProviderGroup->activeProtocolName->c_str() : "").ToLocalChecked());
 }
 
 // Makes a permanent copy of a C++ string using malloc.
@@ -1002,65 +1023,88 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
     fprintf(stderr, "Closing connection because data provider group is NULL.\n");
     return -1;
   }
-  if (dataProviderGroup == nullptr || dataProviderGroup->shouldCloseConnection) {
-    fprintf(stderr, "Closing connection because of client request.\n");
-    return -1;
-  }
   if (wsi) {
-    fprintf(stderr, "Will set WSI to 0x%p\n", wsi);
+    WSIDEBUG("Will set WSI to 0x%p\n", wsi);
     dataProviderGroup->SetWSI(wsi);
   }
 
   switch (reason) {
     case LWS_CALLBACK_WSI_CREATE:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_WSI_CREATE\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_WSI_CREATE\n");
       dataProviderGroup->SetWSI(wsi);
       break;
     case LWS_CALLBACK_WSI_DESTROY:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_WSI_DESTROY\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_WSI_DESTROY\n");
       dataProviderGroup->SetWSI(nullptr);
       break;
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLIENT_ESTABLISHED\n");
     case LWS_CALLBACK_RAW_CONNECTED:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CONNECTED\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_RAW_CONNECTED\n");
       setConnectionState(connectionID, kConnectionStateConnected);
       dataProviderGroup->connectionDidOpen = true;
+      if (dataProviderGroup->activeProtocolName != NULL) {
+        break;
+      }
+      // Fall through and set the active protocol.
+    case LWS_CALLBACK_CLIENT_HTTP_BIND_PROTOCOL:
+    case LWS_CALLBACK_WS_CLIENT_BIND_PROTOCOL:
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_WS_CLIENT_BIND_PROTOCOL\n");
+    case LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL:
+    {
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL\n");
+      const struct lws_protocols *protocol = lws_get_protocol(wsi);
+      dataProviderGroup->activeProtocolName = new std::string(protocol->name);
       break;
+    }
+    case LWS_CALLBACK_WS_PEER_INITIATED_CLOSE:
+    {
+      uint16_t *value = (uint16_t *)in;
+      dataProviderGroup->codeNumber = htons(*value);
+
+      if (length > 2) {
+        char *tempString = (char *)malloc(length - 1);
+        bcopy((void *)((uint8_t *)in + 2), tempString, length - 2);
+        tempString[length - 2] = '\0';
+        dataProviderGroup->reason = new std::string(tempString);
+        free(tempString);
+      }
+      // Fall through.
+    }
     case LWS_CALLBACK_CLOSED:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLOSED\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLOSED\n");
     case LWS_CALLBACK_RAW_CLOSE:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_CLOSED\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_RAW_CLOSED\n");
       setConnectionState(connectionID, kConnectionStateClosed);
       dataProviderGroup->connectionDidClose = true;
       break;
     case LWS_CALLBACK_CLIENT_RECEIVE:
     {
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_RECEIVE\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLIENT_RECEIVE\n");
       WebSocketsDataItem *item = new WebSocketsDataItem((uint8_t *)in, length, true);
-      fprintf(stderr, "@@@ Mid-callback.\n");
+      CBDEBUG("@@@ Mid-callback.\n");
       dataProviderGroup->incomingData.addPendingData(item);
-      fprintf(stderr, "@@@ Leaving callback.\n");
+      CBDEBUG("@@@ Leaving callback.\n");
 
       break;
     }
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_CONNECTION_ERROR\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLIENT_CONNECTION_ERROR\n");
       callConnectionError(connectionID);
       setConnectionState(connectionID, kConnectionStateClosed);
       break;
     case LWS_CALLBACK_RAW_WRITEABLE:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_WRITEABLE\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_RAW_WRITEABLE\n");
     case LWS_CALLBACK_CLIENT_WRITEABLE:
     {
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_WRITEABLE\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLIENT_WRITEABLE\n");
       WebSocketsDataItem *item = NULL;
       if (dataProviderGroup->outgoingData.getPendingData(&item)) {
         size_t bytesWritten = (int)lws_write(wsi, (unsigned char *)item->GetBuf(),
                                 item->GetLength(),
                                 item->IsBinary() ? LWS_WRITE_BINARY : LWS_WRITE_TEXT);
           if (bytesWritten < 0) {
-            fprintf(stderr, "Closing connection because of write failure.\n");
+            CBDEBUG("Closing connection because of write failure.\n");
             return -1;
           } else if (bytesWritten < item->GetLength()) {
             lwsl_err("Partial write LWS_CALLBACK_CLIENT_WRITEABLE\n");
@@ -1069,68 +1113,64 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
       break;
     }
     case LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED:
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED\n");
+      CBDEBUG("@@@ Got callback LWS_CALLBACK_CLIENT_CONFIRM_EXTENSION_SUPPORTED\n");
 #ifdef SUPPORT_DEFLATE
       if ((strcmp((const char *)in, "deflate-stream") == 0) &&
         deny_deflate) {
           lwsl_notice("denied deflate-stream extension\n");
-          fprintf(stderr, "Extension deflate-stream detected.  Returning 1.\n");
+          CBDEBUG("Extension deflate-stream detected.  Returning 1.\n");
           return 1;
       }
       if ((strcmp((const char *)in, "x-webkit-deflate-frame") == 0)) {
-        fprintf(stderr, "Extension x-webkit-deflate-frame detected.  Returning 1.\n");
+        CBDEBUG("Extension x-webkit-deflate-frame detected.  Returning 1.\n");
         return 1;
       }
       if ((strcmp((const char *)in, "deflate-frame") == 0)) {
-        fprintf(stderr, "Extension deflate-frame detected.  Returning 1.\n");
+        CBDEBUG("Extension deflate-frame detected.  Returning 1.\n");
         return 1;
       }
 #endif
       return 0;
-
-    case LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL:
-    {
-      fprintf(stderr, "@@@ Got callback LWS_CALLBACK_RAW_SKT_BIND_PROTOCOL\n");
-      const struct lws_protocols *protocol = lws_get_protocol(wsi);
-      dataProviderGroup->activeProtocolName = new std::string(protocol->name);
-      break;
-    }
     case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
       // If certs don't verify on their own, let them fail.
-      fprintf(stderr, "Ignoring SSL callback.\n");
+      CBDEBUG("Ignoring SSL callback.\n");
       return 0;
 
     // Ignore all of these.
     case LWS_CALLBACK_CONNECTING:  // 105
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CONNECTING\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_CONNECTING\n");
         break;
     case LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_ESTABLISHED_CLIENT_HTTP\n");
         break;
     case LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_RECEIVE_CLIENT_HTTP_READ\n");
         break;
     case LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_CLIENT_APPEND_HANDSHAKE_HEADER\n");
         break;
     case LWS_CALLBACK_CLIENT_HTTP_WRITEABLE:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_HTTP_WRITEABLE\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_CLIENT_HTTP_WRITEABLE\n");
         break;
     case LWS_CALLBACK_COMPLETED_CLIENT_HTTP:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_COMPLETED_CLIENT_HTTP\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_COMPLETED_CLIENT_HTTP\n");
         break;
     case LWS_CALLBACK_PROTOCOL_INIT:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_PROTOCOL_INIT\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_PROTOCOL_INIT\n");
         break;
     case LWS_CALLBACK_VHOST_CERT_AGING:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_VHOST_CERT_AGING\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_VHOST_CERT_AGING\n");
         break;
     case LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH:
-        fprintf(stderr, "Ignoring callback LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH\n");
+        CBDEBUG("Ignoring callback LWS_CALLBACK_CLIENT_FILTER_PRE_ESTABLISH\n");
         break;
     default:
-        fprintf(stderr, "Ignoring callback %d\n", reason);
+        CBDEBUG("Ignoring callback %d\n", reason);
         break;
+  }
+  if (dataProviderGroup == nullptr || dataProviderGroup->shouldCloseConnection) {
+    fprintf(stderr, "Closing connection because of client request.\n");
+    return -1;
   }
   return 0;
 }
@@ -1152,7 +1192,7 @@ DataProvider::DataProvider(const char *name) {
 }
 
 void DataProvider::SetWSI(struct lws *wsi) {
-  fprintf(stderr, "DataProvider: Setting WSI to 0x%p for 0x%p\n", wsi, this);
+  WSIDEBUG("DataProvider: Setting WSI to 0x%p for 0x%p\n", wsi, this);
   this->wsi = wsi;
 }
 

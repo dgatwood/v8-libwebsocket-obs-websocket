@@ -250,8 +250,9 @@ class WebSocket {
   internal_binary_type = "blob";
 
   get readyState() {
-    logMessage("readyState called");
-    return getWebSocketConnectionState(this.internal_connection_id);
+    var retval = getWebSocketConnectionState(this.internal_connection_id);
+    logMessage("readyState called.  Returning "+retval);
+    return retval;
   }
 
   get binaryType() {
@@ -276,7 +277,9 @@ class WebSocket {
   }
 
   get protocol() {
-    logMessage("get protocol called");
-    return getWebSocketActiveProtocol(this.internal_connection_id);
+    logMessage("get protocol called.");
+    var protocol = getWebSocketActiveProtocol(this.internal_connection_id);
+    logMessage("get protocol called.  Returning "+protocol);
+    return protocol;
   }
 }

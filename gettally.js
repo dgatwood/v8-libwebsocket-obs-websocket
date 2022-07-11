@@ -1,6 +1,6 @@
 var obs = undefined;
 
-var test_mode = 1;
+var test_mode = 0;
 
 if (test_mode) {
   // let socket = new WebSocket("wss://javascript.info/article/websocket/demo/hello");
@@ -53,13 +53,13 @@ function connectOBS() {
     eventSubscriptions: (1 << 2),  /* EventSubcription.Scenes - no idea why the constant won't load. */
     rpcVersion: 1
   }).then((value) => {
-    setProgramAndPreviewScenes(["OBS connected: "], [allKeys(value)]);
-    setProgramAndPreviewScenes(["WebSocket version: "], [value.obsWebSocketVersion]);
-    setProgramAndPreviewScenes(["RPC version: "], [value.negotiatedRpcVersion]);
+    logMessage("OBS connected: " + allKeys(value));
+    logMessage("WebSocket version: " + value.obsWebSocketVersion);
+    logMessage("RPC version: " + value.negotiatedRpcVersion);
   }).catch((error) => {
     // console.error("OBS connection failed: "+error);
-    setProgramAndPreviewScenes([ "OBS connection failed: "+allKeys(error) ], [ 
-        error.fileName + ":" + error.lineNumber + ":" + error.message  + error.stack ] );
+    logMessage("OBS connection failed: "+allKeys(error) + " in " + 
+        error.fileName + ":" + error.lineNumber + ":" + error.message  + error.stack);
     setTimeout(connectOBS, 5000);
   });
 }
