@@ -4,6 +4,9 @@ var WebSocket_enable_debugging = false;
 const console = {
   log: (message) => {
     logMessage(message);
+  },
+  error: (message) => {
+    logMessage(message);
   }
 }
 
