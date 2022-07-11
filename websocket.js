@@ -1,4 +1,6 @@
 
+var WebSocket_enable_debugging = false;
+
 const console = {
   log: (message) => {
     logMessage(message);
@@ -19,7 +21,7 @@ class Event {
 
 class WebSocket {
   constructor(url, protocols = "websocket") {
-    logMessage("Constructor called.\n");
+    if (WebSocket_enable_debugging) logMessage("Constructor called.\n");
     if (typeof(protocols)==='string') {
       this.construct(url, [protocols]);
     } else {
@@ -33,7 +35,7 @@ class WebSocket {
   CLOSED = 3;
 
   construct(url, protocols) {
-    logMessage("Secondary constructor called.\n");
+    if (WebSocket_enable_debugging) logMessage("Secondary constructor called.\n");
     Object.defineProperty(this, "url", {
       value: url,
       writable: false,
@@ -97,42 +99,42 @@ class WebSocket {
   }
 
   set onClose(handler) {
-    logMessage("@@@ set onClose called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onClose called");
     this.closeHandler = handler;
   }
 
   set onclose(handler) {
-    logMessage("@@@ set onclose called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onclose called");
     this.closeHandler = handler;
   }
 
   set onError(handler) {
-    logMessage("@@@ set onError called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onError called");
     this.errorHandler = handler;
   }
 
   set onerror(handler) {
-    logMessage("@@@ set onerror called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onerror called");
     this.errorHandler = handler;
   }
 
   set onMessage(handler) {
-    logMessage("@@@ set onMessage called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onMessage called");
     this.messageHandler = handler;
   }
 
   set onmessage(handler) {
-    logMessage("@@@ set onmessage called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onmessage called");
     this.messageHandler = handler;
   }
 
   set onOpen(handler) {
-    logMessage("@@@ set onOpen called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onOpen called");
     this.openHandler = handler;
   }
 
   set onopen(handler) {
-    logMessage("@@@ set onopen called");
+    if (WebSocket_enable_debugging) logMessage("@@@ set onopen called");
     this.openHandler = handler;
   }
 
@@ -144,7 +146,7 @@ class WebSocket {
   }
 
   addEventListener(type, callback, options) {
-    logMessage("@@@ addEventListener called");
+    if (WebSocket_enable_debugging) logMessage("@@@ addEventListener called");
     var newcallback = callback;
     assert(!options.once, "One-shot event listeners are NOT supported.");
     if (type == "open") {
@@ -159,7 +161,7 @@ class WebSocket {
   }
 
   removeEventListener(type, callback, options) {
-    logMessage("@@@ removeEventListener called");
+    if (WebSocket_enable_debugging) logMessage("@@@ removeEventListener called");
     if (type == "open") {
       this.openEventListeners.words.filter(value => value != callback);
     } else if (type == "message") {
@@ -172,7 +174,7 @@ class WebSocket {
   }
 
   dispatchEvent(event) {
-    logMessage("dispatchEvent called");
+    if (WebSocket_enable_debugging) logMessage("dispatchEvent called");
     if (event.type == "open") {
         this.callHandlers(this.openHandler, this.openEventListeners, event);
     } else if (event.type == "message") {
@@ -185,7 +187,7 @@ class WebSocket {
   }
 
   send(data) {
-    logMessage("@@@ send called with payload: " + data);
+    if (WebSocket_enable_debugging) logMessage("@@@ send called with payload: " + data);
     if (this.readyState == this.CONNECTING) {
       exception = new DOMException();
       exception.code = 11;
@@ -198,17 +200,17 @@ class WebSocket {
   }
 
   close(code, reason) {
-    logMessage("@@@ close called");
+    if (WebSocket_enable_debugging) logMessage("@@@ close called");
     closeWebSocket(this.internal_connection_id);
   }
 
   _connectionDidReceiveData(data) {
-    logMessage("@@@ _connectionDidReceiveData called");
+    if (WebSocket_enable_debugging) logMessage("@@@ _connectionDidReceiveData called");
     this._deliverMessage(data, this.url);
   }
 
   _connectionDidClose(code, reason) {
-    logMessage("_connectionDidClose called");
+    if (WebSocket_enable_debugging) logMessage("_connectionDidClose called");
 
     var event = new Event("close");
     event.code = code;
@@ -220,7 +222,7 @@ class WebSocket {
   }
 
   _didReceiveError() {
-    logMessage("_didReceiveError called");
+    if (WebSocket_enable_debugging) logMessage("_didReceiveError called");
 
     var event = new Event("error");
     event.lastEventId = this.lastEventID++;
@@ -228,7 +230,7 @@ class WebSocket {
   }
 
   _deliverMessage(data, origin) {
-    logMessage("_deliverMessage called with data: " + data + " origin: " + origin);
+    if (WebSocket_enable_debugging) logMessage("_deliverMessage called with data: " + data + " origin: " + origin);
     var event = new Event("message");
     event.data = data;
     event.origin = origin;
@@ -236,12 +238,12 @@ class WebSocket {
     event.source = this;
     event.ports = new Array();
 
-    logMessage("event.data: " + event.data);
+    if (WebSocket_enable_debugging) logMessage("event.data: " + event.data);
     this.callHandlers(this.messageHandler, this.messageEventListeners, event);
   }
 
   _didOpen() {
-    logMessage("_didOpen called");
+    if (WebSocket_enable_debugging) logMessage("_didOpen called");
     var event = new Event("open");
     event.lastEventId = this.lastEventID++;
     this.callHandlers(this.openHandler, this.openEventListeners, event);
@@ -251,33 +253,33 @@ class WebSocket {
 
   get readyState() {
     var retval = getWebSocketConnectionState(this.internal_connection_id);
-    logMessage("readyState called.  Returning "+retval);
+    if (WebSocket_enable_debugging) logMessage("readyState called.  Returning "+retval);
     return retval;
   }
 
   get binaryType() {
-    logMessage("readyState called");
+    if (WebSocket_enable_debugging) logMessage("readyState called");
     return this.internal_binary_type;
   }
 
   set binaryType(newBinaryType) {
-    logMessage("set binaryType called");
+    if (WebSocket_enable_debugging) logMessage("set binaryType called");
     this.internal_binary_type = newBinaryType;
     setWebSocketBinaryType(this.internal_connection_id, newBinaryType);
   }
 
   get bufferedAmount() {
-    logMessage("get bufferedAmount called");
+    if (WebSocket_enable_debugging) logMessage("get bufferedAmount called");
     return getWebSocketBufferedAmount(this.internal_connection_id);
   }
 
   get extensions() {
-    logMessage("get extensions called");
+    if (WebSocket_enable_debugging) logMessage("get extensions called");
     return getWebSocketExtensions(this.internal_connection_id);
   }
 
   get protocol() {
-    logMessage("get protocol called.");
+    if (WebSocket_enable_debugging) logMessage("get protocol called.");
     var protocol = getWebSocketActiveProtocol(this.internal_connection_id);
     logMessage("get protocol called.  Returning "+protocol);
     return protocol;

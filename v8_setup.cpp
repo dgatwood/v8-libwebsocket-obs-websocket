@@ -11,13 +11,15 @@
 // Might work on Linux.  Doesn't work in macOS.
 #undef SUPPORT_DEFLATE
 
-#if 1
+#if 0
 #define CBDEBUG(args...) fprintf(stderr, args)
 #define FUNCDEBUG(args...) fprintf(stderr, args)
+#define GENERALDEBUG(args...) fprintf(stderr, args)
 #define WSIDEBUG(args...) fprintf(stderr, args)
 #else
 #define CBDEBUG(args...)
 #define FUNCDEBUG(args...)
+#define GENERALDEBUG(args...)
 #define WSIDEBUG(args...)
 #endif
 
@@ -303,7 +305,7 @@ void callHasConnectionError(int connectionID, v8::Isolate *isolate);
 void sendPendingDataToClient(int connectionID, v8::Isolate *isolate);
 
 void v8_runLoopCallback(void *isolateVoid) {
-  fprintf(stderr, "@@@ v8_runLoopCallback\n");
+  GENERALDEBUG("@@@ v8_runLoopCallback\n");
 
   v8::Isolate *isolate = (v8::Isolate *)isolateVoid;
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
@@ -320,11 +322,11 @@ void v8_runLoopCallback(void *isolateVoid) {
 
     if (connection->wsi != nullptr) {
       struct lws_context *context = lws_get_context(connection->wsi);
-fprintf(stderr, "Waiting for events (%d milliseconds)\n", contextWaitTime);
+      GENERALDEBUG("Waiting for events (%d milliseconds)\n", contextWaitTime);
       lws_service(context, contextWaitTime);
-fprintf(stderr, "Done waiting for events\n");
+      GENERALDEBUG("Done waiting for events\n");
     } else {
-      fprintf(stderr, "Connection %d ignored because wsi is NULL\n", connectionID);
+      GENERALDEBUG("Connection %d ignored because wsi is NULL\n", connectionID);
     }
 
     if (connection->connectionDidOpen) {
@@ -333,9 +335,9 @@ fprintf(stderr, "Done waiting for events\n");
     }
 
     if (connection->incomingData.PendingBytes() > 0) {
-      fprintf(stderr, "@@@ Sending data to client.\n");
+      GENERALDEBUG("@@@ Sending data to client.\n");
       sendPendingDataToClient(connectionID, isolate);
-      fprintf(stderr, "@@@ Done.\n");
+      GENERALDEBUG("@@@ Done.\n");
     }
 
     if (connection->hasConnectionError) {
@@ -722,10 +724,10 @@ void getWebSocketActiveProtocol(const v8::FunctionCallbackInfo<v8::Value>& args)
 
   bool isValid = (dataProviderGroup->activeProtocolName != NULL);
   if (isValid) {
-    fprintf(stderr, "In getWebSocketActiveProtocol: protocol is %s\n",
-            dataProviderGroup->activeProtocolName->c_str());
+    GENERALDEBUG("In getWebSocketActiveProtocol: protocol is %s\n",
+                 dataProviderGroup->activeProtocolName->c_str());
   } else {
-    fprintf(stderr, "In getWebSocketActiveProtocol: protocol is NULL!!!\n");
+    GENERALDEBUG("In getWebSocketActiveProtocol: protocol is NULL!!!\n");
   }
 
   args.GetReturnValue().Set(v8::String::NewFromUtf8(isolate, isValid ?
@@ -762,7 +764,7 @@ struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
   struct lws_protocols *data = (struct lws_protocols *)malloc(sizeof(struct lws_protocols) * (count + 1));
 
   for (size_t i = 0; i < count; i++) {
-    fprintf(stderr, "Protocol %zu: %s\n", i, protocols[i].c_str());
+    GENERALDEBUG("Protocol %zu: %s\n", i, protocols[i].c_str());
     data[i].name = mallocString(protocols[i]);
     data[i].callback = websocketLWSCallback;
     data[i].per_session_data_size = 0;
@@ -811,8 +813,8 @@ bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
     return false;
   }
 
-  fprintf(stderr, "Will connect to %s port %d with path %s using protocol %s\n",
-          connectInfo.address, connectInfo.port, URLPath, URLProtocol);
+  GENERALDEBUG("Will connect to %s port %d with path %s using protocol %s\n",
+               connectInfo.address, connectInfo.port, URLPath, URLProtocol);
 
   bool use_ssl = false;
   if (!strcmp(URLProtocol, "https") || !strcmp(URLProtocol, "wss")) {
@@ -1020,7 +1022,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
 
   if (dataProviderGroup == nullptr) {
-    fprintf(stderr, "Closing connection because data provider group is NULL.\n");
+    GENERALDEBUG("Closing connection because data provider group is NULL.\n");
     return -1;
   }
   if (wsi) {
@@ -1169,7 +1171,7 @@ int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void
         break;
   }
   if (dataProviderGroup == nullptr || dataProviderGroup->shouldCloseConnection) {
-    fprintf(stderr, "Closing connection because of client request.\n");
+    GENERALDEBUG("Closing connection because of client request.\n");
     return -1;
   }
   return 0;
@@ -1214,14 +1216,14 @@ void DataProvider::addPendingData(WebSocketsDataItem *item) {
     position->next = chainItem;
   }
 
-  fprintf(stderr, "Appended to provider %s.  Queue length now %d\n",
-          this->name, this->PendingBytes());
+  GENERALDEBUG("Appended to provider %s.  Queue length now %d\n",
+               this->name, this->PendingBytes());
 
   if (this->wsi != nullptr) {
-    fprintf(stderr, "Requesting callback on writable.\n");
+    GENERALDEBUG("Requesting callback on writable.\n");
     lws_callback_on_writable(this->wsi);
   } else {
-    fprintf(stderr, "Not requesting callback from 0x%p because wsi is NULL.\n", this);
+    GENERALDEBUG("Not requesting callback from 0x%p because wsi is NULL.\n", this);
   }
 }
 

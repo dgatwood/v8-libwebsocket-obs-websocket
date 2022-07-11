@@ -1,5 +1,3 @@
-logMessage("Type of WS: " + typeof WebSocket);
-
 var OBSWebSocket = (function () {
     function e() {
         return (
@@ -963,7 +961,6 @@ var OBSWebSocket = (function () {
                 }),
                 (s.createConnection = function (e) {
                     try {
-logMessage("In create: e = " + e);
                         var t = this,
                             n = t.internalEventPromise("ConnectionOpened"),
                             r = t.internalEventPromise("op:" + g.Hello);
@@ -974,12 +971,6 @@ logMessage("In create: e = " + e);
                             (t.socket.onerror = t.onError.bind(t)),
                             (t.socket.onclose = t.onClose.bind(t)),
                             Promise.resolve(n).then(function () {
-logMessage("Post open check.");
-logMessage("t = " + t);
-logMessage("t.socket = " + t.socket);
-logMessage("t.socket.protocol = " + t.socket.protocol);
-logMessage("e = " + e);
-logMessage("n = " + n);
                                 var e,
                                     n = null == (e = t.socket) ? void 0 : e.protocol;
                                 if (!n) throw new j(-1, "Server sent no subprotocol");
@@ -1045,7 +1036,6 @@ logMessage("n = " + n);
                     }
                 }),
                 (s.onOpen = function (e) {
-                    logMessage("In onOpen: Event is "+e);
                     O("socket.open"), this.emit("ConnectionOpened"), this.internalListeners.emit("ConnectionOpened", e);
                 }),
                 (s.onMessage = function (e) {
