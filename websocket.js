@@ -185,7 +185,7 @@ class WebSocket {
   }
 
   send(data) {
-    logMessage("@@@ send called");
+    logMessage("@@@ send called with payload: " + data);
     if (this.readyState == this.CONNECTING) {
       exception = new DOMException();
       exception.code = 11;
