@@ -44,6 +44,10 @@ bin/v8_setup.o: v8_setup.cpp
 	make makebin;
 	c++ -c ${CXXFLAGS} ${CFLAGS} v8_setup.cpp -o bin/v8_setup.o
 
-bin/gettally: bin/gettally.o bin/v8_setup.o
+bin/gettally: bin/gettally.a main.c
 	make makebin;
-	cc bin/*.o -o bin/gettally ${LDFLAGS} 
+	cc main.c bin/gettally.a -o bin/gettally ${LDFLAGS} 
+
+bin/gettally.a: bin/gettally.o bin/v8_setup.o
+	make makebin;
+	ar rcs bin/gettally.a bin/*.o

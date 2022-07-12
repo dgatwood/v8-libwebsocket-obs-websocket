@@ -42,10 +42,7 @@
 // using namespace node;
 // using namespace v8;
 
-extern char *password;
-bool gNeedsReconnect = true;
-
-std::recursive_mutex connection_mutex;
+#pragma mark - Data types
 
 // States:
 // 0 = Connecting
@@ -79,7 +76,6 @@ typedef struct websocketsDataItemChain {
   WebSocketsDataItem *item;
   struct websocketsDataItemChain *next;
 } websocketsDataItemChain_t;
-
 
 class DataProvider {
   public:
@@ -127,45 +123,35 @@ class WebSocketsContextData {
     struct lws *wsi = nullptr;
 };
 
-WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
-                                             struct lws_protocols * protocols,
-                                             v8::Isolate *isolate) {
-  this->jsObject = jsObject;
-  this->protocols = protocols;
-  this->isolate = isolate;
-}
 
-WebSocketsContextData::~WebSocketsContextData(void) {
-  if (this->activeProtocolName) {
-    delete this->activeProtocolName;
-  }
-  if (this->jsObject) {
-    delete this->jsObject;
-  }
-  if (this->reason) {
-    delete this->reason;
-  }
-  if (this->protocols) {
-    free((void *)this->protocols);
-  }
-}
+#pragma mark - Global variables
 
-void WebSocketsContextData::SetWSI(struct lws *wsi) {
-  WSIDEBUG("Top level: Setting WSI to 0x%p\n", wsi);
-  this->wsi = wsi;
-  this->outgoingData.SetWSI(wsi);
-}
+static char *gPassword;
+static bool gNeedsReconnect = true;
+static std::recursive_mutex connection_mutex;
+static std::map<uint32_t, WebSocketsContextData *> connectionData;
+static std::unique_ptr<v8::Platform> platform;
+static v8::Local<v8::ObjectTemplate> globals;
+static std::vector<std::string> gProgramScenes;
+static std::vector<std::string> gPreviewScenes;
+
+
+#pragma mark - Function prototypes
+
+void callConnectionDidOpen(int connectionID, v8::Isolate *isolate);
+void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
+                            std::string *reason);
+void callHasConnectionError(int connectionID, v8::Isolate *isolate);
+void sendPendingDataToClient(int connectionID, v8::Isolate *isolate);
+void setPreviewToProgram(const v8::FunctionCallbackInfo<v8::Value>& args);
+void retryAfterTimeout(const v8::FunctionCallbackInfo<v8::Value>& args);
 
 void setConnectionState(uint32_t connectionID, int state);
+int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
 
-std::map<uint32_t, WebSocketsContextData *> connectionData;
 
-std::unique_ptr<v8::Platform> platform;
-// v8::Isolate *gIsolate;
-v8::Local<v8::ObjectTemplate> globals;
-
-std::vector<std::string> gProgramScenes;
-std::vector<std::string> gPreviewScenes;
+void setProgramScene(const v8::FunctionCallbackInfo<v8::Value>& args);
+void setPreviewScene(const v8::FunctionCallbackInfo<v8::Value>& args);
 void reconnectOBS(v8::Isolate *isolate);
 void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes);
 void PasswordGetter(v8::Local<v8::String> property,
@@ -192,72 +178,13 @@ struct lws_protocols *createProtocols(std::vector<std::string> protocols);
 uint32_t connectionIDForWSI(struct lws *wsi);
 
 extern "C" {
-void setSceneIsProgram(const char *sceneName);
-void setSceneIsPreview(const char *sceneName);
-void setSceneIsInactive(const char *sceneName);
+  void setSceneIsProgram(const char *sceneName);
+  void setSceneIsPreview(const char *sceneName);
+  void setSceneIsInactive(const char *sceneName);
 };
 
-void retryAfterTimeout(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  gNeedsReconnect = true;
-}
 
-void setPreviewToProgram(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  for (int i = 0; i < gPreviewScenes.size(); i++) {
-    std::string scene = gPreviewScenes[i];
-    gProgramScenes.push_back(scene);
-    setSceneIsProgram(scene.c_str());
-  }
-  gPreviewScenes.clear();
-}
-
-void setProgramScene(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  v8::Isolate *isolate = args.GetIsolate();
-  v8::HandleScope scope(isolate);
-
-  FUNCDEBUG("setProgramScenes called.\n");
-
-  if(args.Length() != 1 || !args[0]->IsString()) {
-    isolate->ThrowException(v8::Exception::TypeError(
-        v8::String::NewFromUtf8(isolate, "Error: String expected").ToLocalChecked()));
-    return;
-  }
-
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-
-  std::vector<std::string> newProgramScenes;
-
-  v8::Local<v8::Value> element = v8::Handle<v8::String>::Cast(args[0]);
-  v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), element);
-  std::string programSceneCPPString(*programSceneUTF8);
-  newProgramScenes.push_back(programSceneCPPString);
-
-  updateScenes(gPreviewScenes, newProgramScenes);
-}
-
-void setPreviewScene(const v8::FunctionCallbackInfo<v8::Value>& args)
-{
-  v8::Isolate *isolate = args.GetIsolate();
-  v8::HandleScope scope(isolate);
-
-  FUNCDEBUG("setPreviewScenes called.\n");
-
-  if(args.Length() != 1 || !args[0]->IsString()) {
-    isolate->ThrowException(v8::Exception::TypeError(
-        v8::String::NewFromUtf8(isolate, "Error: String expected").ToLocalChecked()));
-    return;
-  }
-
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-
-  std::vector<std::string> newPreviewScenes;
-
-  v8::Local<v8::Value> element = v8::Handle<v8::String>::Cast(args[0]);
-  v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), element);
-  std::string previewSceneCPPString(*previewSceneUTF8);
-  newPreviewScenes.push_back(previewSceneCPPString);
-
-  updateScenes(newPreviewScenes, gProgramScenes);
-}
+#pragma mark - Main V8 integration
 
 void *v8_setup(void) {
   v8::V8::InitializeICUDefaultLocation("viscaptz");
@@ -337,11 +264,9 @@ void *v8_setup(void) {
   return (void *)gIsolate;
 }
 
-void callConnectionDidOpen(int connectionID, v8::Isolate *isolate);
-void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
-                            std::string *reason);
-void callHasConnectionError(int connectionID, v8::Isolate *isolate);
-void sendPendingDataToClient(int connectionID, v8::Isolate *isolate);
+void setOBSPassword(char *password) {
+  gPassword = password;
+}
 
 void v8_runLoopCallback(void *isolateVoid) {
   VERBOSEDEBUG("@@@ v8_runLoopCallback\n");
@@ -399,30 +324,6 @@ void v8_runLoopCallback(void *isolateVoid) {
   if (connectionData.size() == 0 && gNeedsReconnect) {
     reconnectOBS(isolate);
   }
-}
-
-void reconnectOBS(v8::Isolate *isolate) {
-  static bool firstTry = true;
-
-  GENERALDEBUG("Connecting to OBS.\n");
-
-  if (firstTry) {
-    firstTry = false;
-  } else {
-    // Wait 5 seconds between retries.
-    usleep(5000000);
-  }
-
-  v8::HandleScope handle_scope(isolate);
-
-  v8::Local<v8::String> functionName =
-      v8::String::NewFromUtf8(isolate, "connectOBS").ToLocalChecked();
-
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::Object> global = context->Global();
-  v8::Local<v8::Value> functionAsValue = global->Get(context, functionName).ToLocalChecked();
-  v8::Local<v8::Function> function = v8::Local<v8::Function>::Cast(functionAsValue);
-  v8::Local<v8::Value> result = function->Call(context, global, 0, nullptr).ToLocalChecked();
 }
 
 void runScript(char *scriptString) {
@@ -539,104 +440,7 @@ void v8_teardown(void) {
 }
 
 
-#pragma mark - Synthesized getters and setters
-
-void PasswordGetter(v8::Local<v8::String> property,
-              const v8::PropertyCallbackInfo<v8::Value>& info) {
-  v8::Isolate *isolate = v8::Isolate::GetCurrent();
-  FUNCDEBUG("PasswordGetter called.\n");
-  
-  v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::String> passwordV8String =
-      v8::String::NewFromUtf8(isolate, password).ToLocalChecked();
-  info.GetReturnValue().Set(passwordV8String);
-}
-
-void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes) {
-  std::set<std::string> inactiveScenes;
-
-  GENERALDEBUG("In updateScenes\n");
-
-  // Mark all of the old preview and program scenes as possibly inactive.
-  for (std::string scene : gPreviewScenes) {
-    inactiveScenes.insert(scene);
-  }
-  for (std::string scene : gProgramScenes) {
-    inactiveScenes.insert(scene);
-  }
-
-  // Remove any new preview and program scenes so that they won't be marked as inactive,
-  // and notify the main code that the scenes are active.
-  for (std::string scene : newPreviewScenes) {
-    inactiveScenes.erase(scene);
-    setSceneIsPreview(scene.c_str());
-  }
-  for (std::string scene : newProgramScenes) {
-    inactiveScenes.erase(scene);
-    setSceneIsProgram(scene.c_str());
-  }
-
-  // Notify the main code that any previously active scenes are no longer active.
-  for (std::string scene : inactiveScenes) {
-    setSceneIsInactive(scene.c_str());
-  }
-
-  gPreviewScenes = newPreviewScenes;
-  gProgramScenes = newProgramScenes;
-}
-
-#pragma mark - Websocket support
-
-// JavaScript methods to implement:
-//
-// + WebSocket(url, [ (protocolString | array of protocolString) ])
-// + close([code [, reason ]])
-// + send(data) - data is String, ArrayBuffer, Blob, TypedArray, or DataView
-// + addEventListener(type [, listener [, (optionsObject | useCapture) ])
-// + removeEventListener(type [, listener [, (optionsObject | useCapture) ])
-// + dispatchEvent(event)
-//
-// Events to implement:
-// + close
-// + error
-// + message
-// + open
-//
-// Properties to implement;
-//
-// + binaryType - property: either "blob" or "arraybuffer".
-// x bufferedAmount - read-only property: bytes queued for writing but not sent.
-// x extensions - read-only property: empty string or list of extensions from server.
-// - protocol - read-only property: the sub-protocol selected by the server.
-// - readyState - read-only property: 0 = connecting, 1 = connected, 2 = closing, 3 = closed.
-// + url - read-only property: the URL from the constructor call.
-
-
-// Support to add on C++ side:
-//
-// connectWebSocket(this, URL, protocols)
-// sendWebSocketData(this.internal_connection_id, data)
-// closeWebSocket(this.internal_connection_id)
-// getWebSocketBufferedAmount()
-// getWebSocketExtensions()
-// setWebSocketBinaryType(typeString)
-//
-// On open, call:
-//
-// _didOpen()
-//
-// When data is received, call:
-//
-// deliverMessage(data, origin)
-//
-// On error, call:
-//
-// didReceiveError()
-//
-// On close, call:
-//
-// close(code, reason)
-
+#pragma mark - Calls from JavaScript into C++ (and support functions)
 
 // Open a socket.
 // connectWebSocket(this, URL, protocols)
@@ -831,8 +635,6 @@ static const struct lws_extension supportedExtensions[] = {
 };
 #endif
 
-int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len);
-
 struct lws_protocols *createProtocols(std::vector<std::string> protocols) {
   size_t count = protocols.size();
   struct lws_protocols *data = (struct lws_protocols *)malloc(sizeof(struct lws_protocols) * (count + 1));
@@ -964,6 +766,138 @@ void logMessage(const v8::FunctionCallbackInfo<v8::Value>& args) {
   fprintf(stderr, "%s\n", messageString.c_str());
 }
 
+void PasswordGetter(v8::Local<v8::String> property,
+              const v8::PropertyCallbackInfo<v8::Value>& info) {
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+  FUNCDEBUG("PasswordGetter called.\n");
+  
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::String> passwordV8String =
+      v8::String::NewFromUtf8(isolate, gPassword).ToLocalChecked();
+  info.GetReturnValue().Set(passwordV8String);
+}
+
+void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::string> newProgramScenes) {
+  std::set<std::string> inactiveScenes;
+
+  GENERALDEBUG("In updateScenes\n");
+
+  // Mark all of the old preview and program scenes as possibly inactive.
+  for (std::string scene : gPreviewScenes) {
+    inactiveScenes.insert(scene);
+  }
+  for (std::string scene : gProgramScenes) {
+    inactiveScenes.insert(scene);
+  }
+
+  // Remove any new preview and program scenes so that they won't be marked as inactive,
+  // and notify the main code that the scenes are active.
+  for (std::string scene : newPreviewScenes) {
+    inactiveScenes.erase(scene);
+    setSceneIsPreview(scene.c_str());
+  }
+  for (std::string scene : newProgramScenes) {
+    inactiveScenes.erase(scene);
+    setSceneIsProgram(scene.c_str());
+  }
+
+  // Notify the main code that any previously active scenes are no longer active.
+  for (std::string scene : inactiveScenes) {
+    setSceneIsInactive(scene.c_str());
+  }
+
+  gPreviewScenes = newPreviewScenes;
+  gProgramScenes = newProgramScenes;
+}
+
+void reconnectOBS(v8::Isolate *isolate) {
+  static bool firstTry = true;
+
+  GENERALDEBUG("Connecting to OBS.\n");
+
+  if (firstTry) {
+    firstTry = false;
+  } else {
+    // Wait 5 seconds between retries.
+    usleep(5000000);
+  }
+
+  v8::HandleScope handle_scope(isolate);
+
+  v8::Local<v8::String> functionName =
+      v8::String::NewFromUtf8(isolate, "connectOBS").ToLocalChecked();
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::Object> global = context->Global();
+  v8::Local<v8::Value> functionAsValue = global->Get(context, functionName).ToLocalChecked();
+  v8::Local<v8::Function> function = v8::Local<v8::Function>::Cast(functionAsValue);
+  v8::Local<v8::Value> result = function->Call(context, global, 0, nullptr).ToLocalChecked();
+}
+
+void retryAfterTimeout(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  gNeedsReconnect = true;
+}
+
+void setPreviewToProgram(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  for (int i = 0; i < gPreviewScenes.size(); i++) {
+    std::string scene = gPreviewScenes[i];
+    gProgramScenes.push_back(scene);
+    setSceneIsProgram(scene.c_str());
+  }
+  gPreviewScenes.clear();
+}
+
+void setProgramScene(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  FUNCDEBUG("setProgramScenes called.\n");
+
+  if(args.Length() != 1 || !args[0]->IsString()) {
+    isolate->ThrowException(v8::Exception::TypeError(
+        v8::String::NewFromUtf8(isolate, "Error: String expected").ToLocalChecked()));
+    return;
+  }
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  std::vector<std::string> newProgramScenes;
+
+  v8::Local<v8::Value> element = v8::Handle<v8::String>::Cast(args[0]);
+  v8::String::Utf8Value programSceneUTF8(v8::Isolate::GetCurrent(), element);
+  std::string programSceneCPPString(*programSceneUTF8);
+  newProgramScenes.push_back(programSceneCPPString);
+
+  updateScenes(gPreviewScenes, newProgramScenes);
+}
+
+void setPreviewScene(const v8::FunctionCallbackInfo<v8::Value>& args) {
+  v8::Isolate *isolate = args.GetIsolate();
+  v8::HandleScope scope(isolate);
+
+  FUNCDEBUG("setPreviewScenes called.\n");
+
+  if(args.Length() != 1 || !args[0]->IsString()) {
+    isolate->ThrowException(v8::Exception::TypeError(
+        v8::String::NewFromUtf8(isolate, "Error: String expected").ToLocalChecked()));
+    return;
+  }
+
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+
+  std::vector<std::string> newPreviewScenes;
+
+  v8::Local<v8::Value> element = v8::Handle<v8::String>::Cast(args[0]);
+  v8::String::Utf8Value previewSceneUTF8(v8::Isolate::GetCurrent(), element);
+  std::string previewSceneCPPString(*previewSceneUTF8);
+  newPreviewScenes.push_back(previewSceneCPPString);
+
+  updateScenes(newPreviewScenes, gProgramScenes);
+}
+
+
+#pragma mark - Calls from C++ into JavaScript
+
 void callConnectionError(uint32_t connectionID) {
   // Call didReceiveError on object.
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
@@ -976,7 +910,6 @@ void callConnectionError(uint32_t connectionID) {
 }
 
 void callConnectionDidOpen(int connectionID, v8::Isolate *isolate) {
-  // @@@
   v8::HandleScope handle_scope(isolate);
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
@@ -1025,7 +958,6 @@ void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumb
 }
 
 void callHasConnectionError(int connectionID, v8::Isolate *isolate) {
-  // @@@
   v8::HandleScope handle_scope(isolate);
   std::lock_guard<std::recursive_mutex> guard(connection_mutex);
   WebSocketsContextData *dataProviderGroup = connectionData[connectionID];
@@ -1090,6 +1022,8 @@ void sendPendingDataToClient(int connectionID, v8::Isolate *isolate) {
   }
 }
 
+
+#pragma mark LibWebSockets handling
 
 int websocketLWSCallback(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t length) {
   uint32_t connectionID = connectionIDForWSI(wsi);
@@ -1272,7 +1206,8 @@ uint32_t connectionIDForWSI(struct lws *wsi) {
   return *connectionIDRef;
 }
 
-#pragma mark - Data provider methods
+
+#pragma mark - DataProvider class methods
 
 DataProvider::DataProvider(const char *name) {
   this->name = name;
@@ -1338,6 +1273,9 @@ uint32_t DataProvider::PendingBytes(void) {
   return pendingBytes;
 }
 
+
+#pragma mark - WebSocketsDataItem class methods
+
 size_t WebSocketsDataItem::GetLength() {
   return this->rawLength;
 }
@@ -1361,6 +1299,38 @@ WebSocketsDataItem::WebSocketsDataItem(uint8_t *buf, size_t length, bool isBinar
 
 WebSocketsDataItem::~WebSocketsDataItem(void) {
   free(this->rawBuf);
+}
+
+
+#pragma mark - WebSocketsContextData class methods
+
+WebSocketsContextData::WebSocketsContextData(v8::Persistent<v8::Object> *jsObject,
+                                             struct lws_protocols * protocols,
+                                             v8::Isolate *isolate) {
+  this->jsObject = jsObject;
+  this->protocols = protocols;
+  this->isolate = isolate;
+}
+
+WebSocketsContextData::~WebSocketsContextData(void) {
+  if (this->activeProtocolName) {
+    delete this->activeProtocolName;
+  }
+  if (this->jsObject) {
+    delete this->jsObject;
+  }
+  if (this->reason) {
+    delete this->reason;
+  }
+  if (this->protocols) {
+    free((void *)this->protocols);
+  }
+}
+
+void WebSocketsContextData::SetWSI(struct lws *wsi) {
+  WSIDEBUG("Top level: Setting WSI to 0x%p\n", wsi);
+  this->wsi = wsi;
+  this->outgoingData.SetWSI(wsi);
 }
 
 
