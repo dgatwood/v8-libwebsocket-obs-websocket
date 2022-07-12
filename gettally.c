@@ -13,6 +13,22 @@
 
 // This supports ONLY the new 5.0 protocol.
 
+void (*gProgramCallback)(const char *sceneName);
+void (*gPreviewCallback)(const char *sceneName);
+void (*gInactiveCallback)(const char *sceneName);
+
+void registerOBSProgramCallback(void (*callbackPointer)(const char *sceneName)) {
+  gProgramCallback = callbackPointer;
+}
+
+void registerOBSPreviewCallback(void (*callbackPointer)(const char *sceneName)) {
+  gPreviewCallback = callbackPointer;
+}
+
+void registerOBSInactiveCallback(void (*callbackPointer)(const char *sceneName)) {
+  gInactiveCallback = callbackPointer;
+}
+
 void runOBSTally(char *password) {
   setOBSPassword(password);
 
@@ -33,4 +49,22 @@ void runOBSTally(char *password) {
     usleep(1000);  // 1000 callbacks per second.
   }
 #endif
+}
+
+void _setSceneIsProgram(const char *sceneName) {
+  if (gProgramCallback != NULL) {
+    gProgramCallback(sceneName);
+  }
+}
+
+void _setSceneIsPreview(const char *sceneName) {
+  if (gPreviewCallback != NULL) {
+    gPreviewCallback(sceneName);
+  }
+}
+
+void _setSceneIsInactive(const char *sceneName) {
+  if (gInactiveCallback != NULL) {
+    gInactiveCallback(sceneName);
+  }
 }

@@ -4,11 +4,19 @@
 
 // This supports ONLY the new 5.0 protocol.
 
+void setSceneIsProgram(const char *sceneName);
+void setSceneIsPreview(const char *sceneName);
+void setSceneIsInactive(const char *sceneName);
+
 int main(int argc, char *argv[]) {
   char *password = "";
   if (argc > 1) {
     password = argv[1];
   }
+
+  registerOBSProgramCallback(&setSceneIsProgram);
+  registerOBSPreviewCallback(&setSceneIsPreview);
+  registerOBSInactiveCallback(&setSceneIsInactive);
 
   runOBSTally(password);
 

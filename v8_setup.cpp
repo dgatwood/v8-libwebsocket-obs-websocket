@@ -138,6 +138,13 @@ static std::vector<std::string> gPreviewScenes;
 
 #pragma mark - Function prototypes
 
+extern "C" {
+  // Callbacks into gettally.c.
+  extern void _setSceneIsProgram(const char *sceneName);
+  extern void _setSceneIsPreview(const char *sceneName);
+  extern void _setSceneIsInactive(const char *sceneName);
+}
+
 void callConnectionDidOpen(int connectionID, v8::Isolate *isolate);
 void callConnectionDidClose(int connectionID, v8::Isolate *isolate, int codeNumber,
                             std::string *reason);
@@ -176,12 +183,6 @@ bool connectWebSocket(std::string URL, struct lws_protocols *protocols,
 struct lws_protocols *createProtocols(std::vector<std::string> protocols);
 
 uint32_t connectionIDForWSI(struct lws *wsi);
-
-extern "C" {
-  void setSceneIsProgram(const char *sceneName);
-  void setSceneIsPreview(const char *sceneName);
-  void setSceneIsInactive(const char *sceneName);
-};
 
 
 #pragma mark - Main V8 integration
@@ -794,16 +795,16 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
   // and notify the main code that the scenes are active.
   for (std::string scene : newPreviewScenes) {
     inactiveScenes.erase(scene);
-    setSceneIsPreview(scene.c_str());
+    _setSceneIsPreview(scene.c_str());
   }
   for (std::string scene : newProgramScenes) {
     inactiveScenes.erase(scene);
-    setSceneIsProgram(scene.c_str());
+    _setSceneIsProgram(scene.c_str());
   }
 
   // Notify the main code that any previously active scenes are no longer active.
   for (std::string scene : inactiveScenes) {
-    setSceneIsInactive(scene.c_str());
+    _setSceneIsInactive(scene.c_str());
   }
 
   gPreviewScenes = newPreviewScenes;
@@ -842,7 +843,7 @@ void setPreviewToProgram(const v8::FunctionCallbackInfo<v8::Value>& args) {
   for (int i = 0; i < gPreviewScenes.size(); i++) {
     std::string scene = gPreviewScenes[i];
     gProgramScenes.push_back(scene);
-    setSceneIsProgram(scene.c_str());
+    _setSceneIsProgram(scene.c_str());
   }
   gPreviewScenes.clear();
 }
