@@ -14,6 +14,11 @@ endif
 
 all: bin/gettally
 
+install:
+	cp bin/gettally /usr/local/bin/
+	cp bin/libgettally.a /usr/local/lib/
+	cp bin/libgettally.so /usr/local/lib/
+
 clean:
 	rm -rf bin
 
