@@ -142,7 +142,7 @@ static std::vector<std::string> gPreviewScenes;
 extern "C" {
   // Callbacks into gettally.c.
   extern void _setSceneIsProgram(const char *sceneName);
-  extern void _setSceneIsPreview(const char *sceneName);
+  extern void _setSceneIsPreview(const char *sceneName, bool alsoOnProgram);
   extern void _setSceneIsInactive(const char *sceneName);
 }
 
@@ -798,13 +798,21 @@ void updateScenes(std::vector<std::string> newPreviewScenes, std::vector<std::st
 
   // Remove any new preview and program scenes so that they won't be marked as inactive,
   // and notify the main code that the scenes are active.
-  for (std::string scene : newPreviewScenes) {
-    inactiveScenes.erase(scene);
-    _setSceneIsPreview(scene.c_str());
-  }
   for (std::string scene : newProgramScenes) {
     inactiveScenes.erase(scene);
     _setSceneIsProgram(scene.c_str());
+  }
+
+  for (std::string scene : newPreviewScenes) {
+    inactiveScenes.erase(scene);
+    bool isProgram = false;
+
+    // Flag any preview scenes that are also on the program output.
+    auto ret = std::find(newProgramScenes.begin(), newProgramScenes.end(), scene);
+    if (ret != newProgramScenes.end()) {
+      isProgram = true;
+    }
+    _setSceneIsPreview(scene.c_str(), isProgram);
   }
 
   // Notify the main code that any previously active scenes are no longer active.

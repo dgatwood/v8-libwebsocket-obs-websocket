@@ -7,7 +7,7 @@
 // This supports ONLY the new 5.0 protocol.
 
 void setSceneIsProgram(const char *sceneName);
-void setSceneIsPreview(const char *sceneName);
+void setSceneIsPreview(const char *sceneName, bool alsoOnProgram);
 void setSceneIsInactive(const char *sceneName);
 
 int main(int argc, char *argv[]) {
@@ -31,8 +31,9 @@ void setSceneIsProgram(const char *sceneName) {
   fprintf(stderr, "PROGRAM SCENE: %s\n", sceneName);
 }
 
-void setSceneIsPreview(const char *sceneName) {
-  fprintf(stderr, "PREVIEW SCENE: %s\n", sceneName);
+void setSceneIsPreview(const char *sceneName, bool alsoOnProgram) {
+  fprintf(stderr, "PREVIEW SCENE: %s (on program: %s)\n", sceneName,
+          alsoOnProgram ? "true" : "false");
 }
 
 void setSceneIsInactive(const char *sceneName) {

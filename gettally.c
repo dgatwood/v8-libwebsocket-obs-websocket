@@ -14,14 +14,15 @@
 // This supports ONLY the new 5.0 protocol.
 
 void (*gProgramCallback)(const char *sceneName);
-void (*gPreviewCallback)(const char *sceneName);
+void (*gPreviewCallback)(const char *sceneName, bool alsoOnProgram);
 void (*gInactiveCallback)(const char *sceneName);
 
 void registerOBSProgramCallback(void (*callbackPointer)(const char *sceneName)) {
   gProgramCallback = callbackPointer;
 }
 
-void registerOBSPreviewCallback(void (*callbackPointer)(const char *sceneName)) {
+void registerOBSPreviewCallback(void (*callbackPointer)(const char *sceneName,
+                                                        bool alsoOnProgram)) {
   gPreviewCallback = callbackPointer;
 }
 
@@ -53,19 +54,31 @@ void runOBSTally(char *OBSWebSocketURL, char *password) {
 }
 
 void _setSceneIsProgram(const char *sceneName) {
+  fprintf(stderr, "Calling program callback.\n");
   if (gProgramCallback != NULL) {
     gProgramCallback(sceneName);
+  } else {
+    fprintf(stderr, "Not setting program (no callback)\n");
   }
+  fprintf(stderr, "Done.\n");
 }
 
-void _setSceneIsPreview(const char *sceneName) {
+void _setSceneIsPreview(const char *sceneName, bool alsoOnProgram) {
+  fprintf(stderr, "Calling preview callback.\n");
   if (gPreviewCallback != NULL) {
-    gPreviewCallback(sceneName);
+    gPreviewCallback(sceneName, alsoOnProgram);
+  } else {
+    fprintf(stderr, "Not setting preview (no callback)\n");
   }
+  fprintf(stderr, "Done.\n");
 }
 
 void _setSceneIsInactive(const char *sceneName) {
+  fprintf(stderr, "Calling inactive callback.\n");
   if (gInactiveCallback != NULL) {
     gInactiveCallback(sceneName);
+  } else {
+    fprintf(stderr, "Not setting inactive (no callback)\n");
   }
+  fprintf(stderr, "Done.\n");
 }
