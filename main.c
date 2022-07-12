@@ -2,6 +2,8 @@
 
 #include "gettally.h"
 
+#define OBS_URL "ws://127.0.0.1:4455/"
+
 // This supports ONLY the new 5.0 protocol.
 
 void setSceneIsProgram(const char *sceneName);
@@ -18,7 +20,7 @@ int main(int argc, char *argv[]) {
   registerOBSPreviewCallback(&setSceneIsPreview);
   registerOBSInactiveCallback(&setSceneIsInactive);
 
-  runOBSTally(password);
+  runOBSTally(OBS_URL, password);
 
   return 0;
 }

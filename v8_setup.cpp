@@ -126,6 +126,7 @@ class WebSocketsContextData {
 
 #pragma mark - Global variables
 
+static char *gOBSWebSocketURL;
 static char *gPassword;
 static bool gNeedsReconnect = true;
 static std::recursive_mutex connection_mutex;
@@ -263,6 +264,10 @@ void *v8_setup(void) {
   context->Enter();
 
   return (void *)gIsolate;
+}
+
+void setOBSURL(char *OBSWebSocketURL) {
+  gOBSWebSocketURL = OBSWebSocketURL;
 }
 
 void setOBSPassword(char *password) {
@@ -832,7 +837,13 @@ void reconnectOBS(v8::Isolate *isolate) {
   v8::Local<v8::Object> global = context->Global();
   v8::Local<v8::Value> functionAsValue = global->Get(context, functionName).ToLocalChecked();
   v8::Local<v8::Function> function = v8::Local<v8::Function>::Cast(functionAsValue);
-  v8::Local<v8::Value> result = function->Call(context, global, 0, nullptr).ToLocalChecked();
+
+  v8::Local<v8::String> OBSWebSocketURLV8 =
+      v8::String::NewFromUtf8(isolate, gOBSWebSocketURL).ToLocalChecked();
+  v8::Local<v8::Value> args[1];
+  args[0] = OBSWebSocketURLV8;
+
+  v8::Local<v8::Value> result = function->Call(context, global, 1, args).ToLocalChecked();
 }
 
 void retryAfterTimeout(const v8::FunctionCallbackInfo<v8::Value>& args) {

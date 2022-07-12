@@ -1,6 +1,6 @@
 var obs = undefined;
 
-function connectOBS() {
+function connectOBS(obsWebSocketURL) {
   obs = new OBSWebSocket();
 
   obs.on('Identified', () => {
@@ -27,7 +27,7 @@ function connectOBS() {
     setPreviewToProgram();
   });
 
-  obs.connect('ws://127.0.0.1:4455', obsPassword, {
+  obs.connect(obsWebSocketURL, obsPassword, {
     eventSubscriptions: (1 << 2) | (1 << 4),  /* EventSubcription.Scenes and Transitions */
     rpcVersion: 1
   }).then((value) => {

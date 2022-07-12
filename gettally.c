@@ -29,7 +29,8 @@ void registerOBSInactiveCallback(void (*callbackPointer)(const char *sceneName))
   gInactiveCallback = callbackPointer;
 }
 
-void runOBSTally(char *password) {
+void runOBSTally(char *OBSWebSocketURL, char *password) {
+  setOBSURL(OBSWebSocketURL);
   setOBSPassword(password);
 
 #if 1

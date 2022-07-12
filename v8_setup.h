@@ -3,6 +3,7 @@
 extern "C" {
 #endif
 
+void setOBSURL(char *URL);
 void setOBSPassword(char *password);
 void *v8_setup(void);  // Returns isolate cast to void pointer.
 void runScript(char *scriptString);
