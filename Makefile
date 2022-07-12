@@ -18,6 +18,7 @@ install:
 	cp bin/gettally /usr/local/bin/
 	cp bin/libgettally.a /usr/local/lib/
 	cp bin/libgettally.so /usr/local/lib/
+	cp gettally.h /usr/local/include/
 
 clean:
 	rm -rf bin
